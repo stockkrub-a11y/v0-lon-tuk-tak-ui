@@ -6,10 +6,10 @@ from sqlalchemy.orm import sessionmaker
 # ⚙️ Database connection settings
 # ------------------------------------------------------
 DB_USER = "postgres"       # postgres username
-DB_PASSWORD = "chokun2548" # postgres password
+DB_PASSWORD = "maipai" # postgres password
 DB_HOST = "localhost"      # server IP
 DB_PORT = "5432"          # postgres port
-DB_NAME = "lontuktak"     # our project database
+DB_NAME = "postgres"     # our project database
 
 # ------------------------------------------------------
 # 🔗 Create SQLAlchemy Engine
