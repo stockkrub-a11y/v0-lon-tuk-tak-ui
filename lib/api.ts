@@ -1,20 +1,76 @@
 import { createClient } from "./supabase/client"
+import * as XLSX from "xlsx"
 
 // Helper function to get Supabase client
 function getSupabaseClient() {
   return createClient()
 }
 
-// Note: Training and prediction functionality requires ML backend
-// These functions now query existing forecasts from the database
-export async function trainModel(salesFile: File, productFile?: File) {
-  throw new Error(
-    "Training requires ML backend. Please use your FastAPI backend or Supabase Edge Functions for training.",
-  )
+// Backend API URL - if set, will use backend for ML training
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || ""
+
+export async function trainModel(salesFile: File, productFile?: File, useBackend = true) {
+  if (!productFile) {
+    throw new Error("Both sales and product files are required")
+  }
+
+  // Try backend training first if API URL is configured and useBackend is true
+  if (useBackend && API_BASE_URL) {
+    try {
+      console.log("[v0] Attempting to train model using backend:", API_BASE_URL)
+
+      const formData = new FormData()
+      formData.append("sales_file", salesFile)
+      formData.append("product_file", productFile)
+
+      const response = await fetch(`${API_BASE_URL}/train`, {
+        method: "POST",
+        body: formData,
+      })
+
+      if (!response.ok) {
+        throw new Error(`Backend training failed: ${response.status}`)
+      }
+
+      const result = await response.json()
+      console.log("[v0] Backend training successful:", result)
+      return result
+    } catch (error) {
+      console.error("[v0] Backend training failed, falling back to Supabase upload:", error)
+      // Fall through to Supabase upload
+    }
+  }
+
+  // Fallback: Upload to Supabase without ML training
+  console.log("[v0] Using Supabase upload (no ML training)")
+  return uploadFilesToSupabase(salesFile, productFile)
 }
 
-export async function predictSales(nForecast = 3) {
-  console.log("[v0] Fetching existing forecasts for n_forecast:", nForecast)
+export async function predictSales(nForecast = 3, useBackend = true) {
+  // Try backend prediction first if API URL is configured
+  if (useBackend && API_BASE_URL) {
+    try {
+      console.log("[v0] Attempting to predict using backend:", API_BASE_URL)
+
+      const response = await fetch(`${API_BASE_URL}/predict?n_forecast=${nForecast}`, {
+        method: "POST",
+      })
+
+      if (!response.ok) {
+        throw new Error(`Backend prediction failed: ${response.status}`)
+      }
+
+      const result = await response.json()
+      console.log("[v0] Backend prediction successful:", result)
+      return result
+    } catch (error) {
+      console.error("[v0] Backend prediction failed, falling back to existing forecasts:", error)
+      // Fall through to Supabase query
+    }
+  }
+
+  // Fallback: Query existing forecasts from Supabase
+  console.log("[v0] Fetching existing forecasts from Supabase for n_forecast:", nForecast)
 
   const supabase = getSupabaseClient()
 
@@ -728,4 +784,137 @@ export async function getSearchSuggestions(search: string) {
     console.error("[v0] Failed to fetch search suggestions:", error)
     return { success: false, suggestions: [] }
   }
+}
+
+export async function uploadFilesToSupabase(salesFile: File, productFile: File) {
+  console.log("[v0] Starting Supabase upload...")
+
+  const supabase = getSupabaseClient()
+
+  try {
+    // Parse product file
+    const productData = await parseExcelFile(productFile)
+    console.log("[v0] Parsed product file:", productData.length, "rows")
+
+    // Parse sales file
+    const salesData = await parseExcelFile(salesFile)
+    console.log("[v0] Parsed sales file:", salesData.length, "rows")
+
+    // Insert product data into all_products table
+    if (productData.length > 0) {
+      const productsToInsert = productData
+        .map((row: any) => ({
+          product_sku: row.SKU || row.sku || row["Product SKU"] || "",
+          product_name: row.Name || row.name || row["Product Name"] || "",
+          category: row.Category || row.category || row["หมวดหมู่"] || "",
+          quantity: Number.parseInt(row.Quantity || row.quantity || row["Stock"] || "0"),
+        }))
+        .filter((p) => p.product_sku) // Only insert rows with SKU
+
+      const { error: productError } = await supabase
+        .from("all_products")
+        .upsert(productsToInsert, { onConflict: "product_sku" })
+
+      if (productError) {
+        console.error("[v0] Error inserting products:", productError)
+        throw new Error(`Failed to insert products: ${productError.message}`)
+      }
+
+      // Also update base_stock table
+      const stockToInsert = productsToInsert.map((p) => ({
+        product_sku: p.product_sku,
+        product_name: p.product_name,
+        หมวดหมู่: p.category,
+        stock_level: p.quantity,
+        flag: "active",
+        unchanged_counter: 0,
+      }))
+
+      const { error: stockError } = await supabase
+        .from("base_stock")
+        .upsert(stockToInsert, { onConflict: "product_sku" })
+
+      if (stockError) {
+        console.error("[v0] Error updating stock:", stockError)
+      }
+    }
+
+    // Insert sales data into base_data table
+    if (salesData.length > 0) {
+      const salesToInsert = salesData
+        .map((row: any) => {
+          const date = parseDate(row.Date || row.date || row["Sales Date"])
+          return {
+            product_sku: row.SKU || row.sku || row["Product SKU"] || "",
+            product_name: row.Name || row.name || row["Product Name"] || "",
+            total_quantity: Number.parseInt(row.Quantity || row.quantity || row["Total Quantity"] || "0"),
+            sales_date: date.toISOString().split("T")[0],
+            sales_year: date.getFullYear(),
+            sales_month: date.getMonth() + 1,
+          }
+        })
+        .filter((s) => s.product_sku && s.total_quantity > 0)
+
+      const { error: salesError } = await supabase.from("base_data").insert(salesToInsert)
+
+      if (salesError) {
+        console.error("[v0] Error inserting sales:", salesError)
+        throw new Error(`Failed to insert sales data: ${salesError.message}`)
+      }
+    }
+
+    return {
+      success: true,
+      message: "Files uploaded successfully",
+      data_cleaning: {
+        rows_uploaded: productData.length + salesData.length,
+      },
+      ml_training: {
+        status: "skipped",
+        message: "ML training skipped. Data uploaded to Supabase successfully.",
+      },
+    }
+  } catch (error) {
+    console.error("[v0] Upload failed:", error)
+    throw error
+  }
+}
+
+async function parseExcelFile(file: File): Promise<any[]> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+
+    reader.onload = (e) => {
+      try {
+        const data = e.target?.result
+        const workbook = XLSX.read(data, { type: "binary" })
+        const sheetName = workbook.SheetNames[0]
+        const worksheet = workbook.Sheets[sheetName]
+        const jsonData = XLSX.utils.sheet_to_json(worksheet)
+        resolve(jsonData)
+      } catch (error) {
+        reject(error)
+      }
+    }
+
+    reader.onerror = () => reject(new Error("Failed to read file"))
+    reader.readAsBinaryString(file)
+  })
+}
+
+function parseDate(dateStr: string): Date {
+  if (!dateStr) return new Date()
+
+  // Try parsing as ISO date
+  const isoDate = new Date(dateStr)
+  if (!isNaN(isoDate.getTime())) return isoDate
+
+  // Try parsing as Excel serial number
+  const excelDate = Number.parseFloat(dateStr)
+  if (!isNaN(excelDate)) {
+    const date = new Date((excelDate - 25569) * 86400 * 1000)
+    if (!isNaN(date.getTime())) return date
+  }
+
+  return new Date()
 }
