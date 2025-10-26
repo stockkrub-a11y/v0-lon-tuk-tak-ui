@@ -788,9 +788,9 @@ export async function getSearchSuggestions(search: string) {
 export async function uploadFilesToSupabase(salesFile: File, productFile: File) {
   console.log("[v0] Starting Supabase upload...")
 
-  const supabase = getSupabaseClient()
-
   try {
+    const supabase = getSupabaseClient()
+
     // Parse product file
     const productData = await parseExcelFile(productFile)
     console.log("[v0] Parsed product file:", productData.length, "rows")
@@ -804,7 +804,7 @@ export async function uploadFilesToSupabase(salesFile: File, productFile: File) 
       const productsToInsert = productData
         .map((row: any) => ({
           product_sku: row.SKU || row.sku || row["Product SKU"] || "",
-          product_name: row.Name || row.name || row["Product Name"] || "",
+          product_name: (row.Name || row.name || row["Product Name"] || "").trim() || null,
           category: row.Category || row.category || row["หมวดหมู่"] || "",
           quantity: Number.parseInt(row.Quantity || row.quantity || row["Stock"] || "0"),
         }))
@@ -835,6 +835,7 @@ export async function uploadFilesToSupabase(salesFile: File, productFile: File) 
 
       if (stockError) {
         console.error("[v0] Error updating stock:", stockError)
+        throw new Error(`Failed to update stock: ${stockError.message}`)
       }
     }
 
@@ -845,7 +846,7 @@ export async function uploadFilesToSupabase(salesFile: File, productFile: File) 
           const date = parseDate(row.Date || row.date || row["Sales Date"])
           return {
             product_sku: row.SKU || row.sku || row["Product SKU"] || "",
-            product_name: row.Name || row.name || row["Product Name"] || "",
+            product_name: (row.Name || row.name || row["Product Name"] || "").trim() || null,
             total_quantity: Number.parseInt(row.Quantity || row.quantity || row["Total Quantity"] || "0"),
             sales_date: date.toISOString().split("T")[0],
             sales_year: date.getFullYear(),
