@@ -1,5 +1,4 @@
 import { createClient } from "./supabase/client"
-import * as XLSX from "xlsx"
 
 // Helper function to get Supabase client
 function getSupabaseClient() {
@@ -881,25 +880,34 @@ export async function uploadFilesToSupabase(salesFile: File, productFile: File) 
 }
 
 async function parseExcelFile(file: File): Promise<any[]> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
+  try {
+    const XLSX = await import("xlsx")
 
-    reader.onload = (e) => {
-      try {
-        const data = e.target?.result
-        const workbook = XLSX.read(data, { type: "binary" })
-        const sheetName = workbook.SheetNames[0]
-        const worksheet = workbook.Sheets[sheetName]
-        const jsonData = XLSX.utils.sheet_to_json(worksheet)
-        resolve(jsonData)
-      } catch (error) {
-        reject(error)
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+
+      reader.onload = (e) => {
+        try {
+          const data = e.target?.result
+          const workbook = XLSX.read(data, { type: "binary" })
+          const sheetName = workbook.SheetNames[0]
+          const worksheet = workbook.Sheets[sheetName]
+          const jsonData = XLSX.utils.sheet_to_json(worksheet)
+          resolve(jsonData)
+        } catch (error) {
+          reject(error)
+        }
       }
-    }
 
-    reader.onerror = () => reject(new Error("Failed to read file"))
-    reader.readAsBinaryString(file)
-  })
+      reader.onerror = () => reject(new Error("Failed to read file"))
+      reader.readAsBinaryString(file)
+    })
+  } catch (error) {
+    throw new Error(
+      "Excel parsing library (xlsx) is not installed. Please run: npm install xlsx\n\n" +
+        "Alternatively, use your backend for file uploads and ML training.",
+    )
+  }
 }
 
 function parseDate(dateStr: string): Date {
