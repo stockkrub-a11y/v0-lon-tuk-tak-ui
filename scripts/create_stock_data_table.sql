@@ -28,15 +28,14 @@ FROM all_products
 WHERE NOT EXISTS (SELECT 1 FROM stock_data LIMIT 1);
 
 -- Insert more recent data (7 days ago)
--- Added table qualifiers (ap.) to resolve ambiguous column references
 INSERT INTO stock_data (week_date, product_name, product_sku, stock_level, min_stock, buffer)
 SELECT 
     CURRENT_DATE - INTERVAL '7 days' as week_date,
-    ap.product_name,
-    ap.product_sku,
+    product_name,
+    product_sku,
     FLOOR(RANDOM() * 80 + 30)::INTEGER as stock_level,
-    COALESCE(sd.min_stock, FLOOR(RANDOM() * 20 + 10)::INTEGER) as min_stock,
-    COALESCE(sd.buffer, FLOOR(RANDOM() * 10 + 5)::INTEGER) as buffer
+    min_stock,
+    buffer
 FROM all_products ap
 LEFT JOIN stock_data sd ON sd.product_name = ap.product_name AND sd.week_date = CURRENT_DATE - INTERVAL '14 days'
 WHERE NOT EXISTS (
@@ -46,15 +45,14 @@ WHERE NOT EXISTS (
 );
 
 -- Insert current data (today)
--- Added table qualifiers (ap.) to resolve ambiguous column references
 INSERT INTO stock_data (week_date, product_name, product_sku, stock_level, min_stock, buffer)
 SELECT 
     CURRENT_DATE as week_date,
-    ap.product_name,
-    ap.product_sku,
+    product_name,
+    product_sku,
     FLOOR(RANDOM() * 60 + 10)::INTEGER as stock_level,
-    COALESCE(sd.min_stock, FLOOR(RANDOM() * 20 + 10)::INTEGER) as min_stock,
-    COALESCE(sd.buffer, FLOOR(RANDOM() * 10 + 5)::INTEGER) as buffer
+    min_stock,
+    buffer
 FROM all_products ap
 LEFT JOIN stock_data sd ON sd.product_name = ap.product_name AND sd.week_date = CURRENT_DATE - INTERVAL '7 days'
 WHERE NOT EXISTS (

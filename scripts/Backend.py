@@ -310,7 +310,7 @@ async def upload_stock_files(
                 )
             prev_content = await previous_stock.read()
             # Use header=0 to correctly read Excel files without a skip row
-            df_prev = pd.read_excel(io.BytesIO(prev_content), header=1)
+            df_prev = pd.read_excel(io.BytesIO(prev_content), header=0)
             print(f"[Backend] Previous stock loaded from file: {len(df_prev)} rows")
         
         df_curr = df_curr.rename(columns={
@@ -329,8 +329,7 @@ async def upload_stock_files(
         })
         df_curr["stock_level"] = pd.to_numeric(df_curr["stock_level"], errors='coerce').fillna(0).astype(int)
         df_prev["stock_level"] = pd.to_numeric(df_prev["stock_level"], errors='coerce').fillna(0).astype(int)
-        df_curr = df_curr[df_curr['stock_level'].notna()]  # Remove rows where จำนวน is null
-        df_prev = df_prev[df_prev['stock_level'].notna()]
+        
         # Generate stock report
         print("[Backend] Generating stock report...")
         report_df = generate_stock_report(df_prev, df_curr)
