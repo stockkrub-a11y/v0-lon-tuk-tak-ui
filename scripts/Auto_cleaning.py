@@ -107,6 +107,16 @@ def auto_cleaning(sales_path, product_path, engine):
     df_new["sales_year"] = df_new["sales_date"].dt.year
     df_new["sales_month"] = df_new["sales_date"].dt.month
 
+    if "sales_date" not in df_new.columns:
+        # Try to find any date-like column
+        date_candidates = [col for col in df_new.columns if any(keyword in col.lower() for keyword in ['date', 'วันที่', 'เวลา', 'time'])]
+        if date_candidates:
+            print(f"⚠️ 'sales_date' column not found. Using '{date_candidates[0]}' as sales_date")
+            df_new = df_new.rename(columns={date_candidates[0]: "sales_date"}).copy()
+        else:
+            available_cols = df_new.columns.tolist()
+            raise ValueError(f"❌ Could not find sales date column. Available columns: {available_cols}")
+
     # --- Aggregate sales ---
     summary = (
         df_new.groupby(["Product_SKU","sales_date","sales_year","sales_month"], as_index=False)
