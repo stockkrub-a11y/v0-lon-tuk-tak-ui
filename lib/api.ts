@@ -1,6 +1,6 @@
 import { getSupabaseClient } from "./supabase/client"
 
-const supabase = getSupabaseClient()
+// This ensures the client is created after environment variables are loaded
 
 // Stock Management Functions
 export async function getStockLevels(params?: {
@@ -10,6 +10,10 @@ export async function getStockLevels(params?: {
   sort_by?: string
 }) {
   try {
+    const supabase = getSupabaseClient()
+
+    console.log("[v0] Fetching stock levels with params:", params)
+
     let query = supabase
       .from("base_stock")
       .select("product_name, product_sku, stock_level, หมวดหมู่, flag, unchanged_counter")
@@ -36,7 +40,12 @@ export async function getStockLevels(params?: {
 
     const { data, error } = await query
 
-    if (error) throw error
+    if (error) {
+      console.error("[v0] Supabase error:", error)
+      throw error
+    }
+
+    console.log("[v0] Successfully fetched", data?.length || 0, "stock items")
 
     return {
       success: true,
@@ -60,12 +69,21 @@ export async function getStockLevels(params?: {
 
 export async function getStockCategories() {
   try {
+    const supabase = getSupabaseClient()
+
+    console.log("[v0] Fetching stock categories")
+
     const { data, error } = await supabase.from("base_stock").select("หมวดหมู่").not("หมวดหมู่", "is", null)
 
-    if (error) throw error
+    if (error) {
+      console.error("[v0] Supabase error:", error)
+      throw error
+    }
 
     // Get unique categories
     const categories = [...new Set(data.map((item) => item.หมวดหมู่))]
+
+    console.log("[v0] Successfully fetched", categories.length, "categories")
 
     return {
       success: true,
@@ -80,12 +98,21 @@ export async function getStockCategories() {
 // Notifications Functions
 export async function getNotifications() {
   try {
+    const supabase = getSupabaseClient()
+
+    console.log("[v0] Fetching notifications")
+
     const { data, error } = await supabase
       .from("stock_notifications")
       .select("*")
       .order("created_at", { ascending: false })
 
-    if (error) throw error
+    if (error) {
+      console.error("[v0] Supabase error:", error)
+      throw error
+    }
+
+    console.log("[v0] Successfully fetched", data?.length || 0, "notifications")
 
     return data.map((item) => ({
       Product: item.Product,
@@ -107,6 +134,8 @@ export async function getNotifications() {
 
 export async function checkBaseStock() {
   try {
+    const supabase = getSupabaseClient()
+
     const { count, error } = await supabase.from("base_stock").select("*", { count: "exact", head: true })
 
     if (error) throw error
@@ -125,6 +154,10 @@ export async function checkBaseStock() {
 // Dashboard Analytics
 export async function getDashboardAnalytics() {
   try {
+    const supabase = getSupabaseClient()
+
+    console.log("[v0] Fetching dashboard analytics")
+
     // Get total stock items
     const { count: totalItems } = await supabase.from("base_stock").select("*", { count: "exact", head: true })
 
@@ -146,6 +179,13 @@ export async function getDashboardAnalytics() {
       .eq("sales_month", currentMonth)
 
     const salesThisMonth = salesData?.reduce((sum, item) => sum + (item.total_quantity || 0), 0) || 0
+
+    console.log("[v0] Dashboard analytics:", {
+      totalItems,
+      lowStockAlerts: lowStockData?.length,
+      outOfStock: outOfStockData?.length,
+      salesThisMonth,
+    })
 
     return {
       success: true,
@@ -173,6 +213,8 @@ export async function getDashboardAnalytics() {
 // Analysis Functions
 export async function getAnalysisHistoricalSales(sku: string) {
   try {
+    const supabase = getSupabaseClient()
+
     const { data, error } = await supabase
       .from("base_data")
       .select("*")
@@ -219,6 +261,8 @@ export async function getAnalysisHistoricalSales(sku: string) {
 
 export async function getAnalysisBestSellers(year: number, month: number, topN = 10) {
   try {
+    const supabase = getSupabaseClient()
+
     const { data, error } = await supabase
       .from("base_data")
       .select("product_sku, product_name, total_quantity")
@@ -248,6 +292,8 @@ export async function getAnalysisBestSellers(year: number, month: number, topN =
 
 export async function getAnalysisTotalIncome(product_sku = "", category = "") {
   try {
+    const supabase = getSupabaseClient()
+
     let query = supabase.from("base_data").select("product_sku, product_name, total_quantity, sales_year, sales_month")
 
     if (product_sku) {
@@ -313,6 +359,8 @@ export async function getAnalysisTotalIncome(product_sku = "", category = "") {
 
 export async function getAnalysisBaseSKUs(search = "") {
   try {
+    const supabase = getSupabaseClient()
+
     let query = supabase.from("base_stock").select("product_sku")
 
     if (search) {
@@ -338,6 +386,8 @@ export async function getAnalysisBaseSKUs(search = "") {
 
 export async function getAnalysisPerformanceProducts(search = "") {
   try {
+    const supabase = getSupabaseClient()
+
     let query = supabase.from("all_products").select("product_sku, product_name, category")
 
     if (search) {
@@ -379,6 +429,8 @@ export async function getAnalysisPerformanceProducts(search = "") {
 
 export async function getAnalysisPerformance(skuList: string[]) {
   try {
+    const supabase = getSupabaseClient()
+
     const { data, error } = await supabase
       .from("base_data")
       .select("product_sku, product_name, total_quantity, sales_month")
@@ -426,6 +478,8 @@ export async function getAnalysisPerformance(skuList: string[]) {
 
 export async function getSearchSuggestions(search: string) {
   try {
+    const supabase = getSupabaseClient()
+
     const { data, error } = await supabase
       .from("all_products")
       .select("product_sku, product_name, category")
@@ -472,6 +526,8 @@ export async function predictSales(nForecast = 3) {
 
 export async function getExistingForecasts() {
   try {
+    const supabase = getSupabaseClient()
+
     const { data, error } = await supabase.from("forecasts").select("*").order("forecast_date", { ascending: true })
 
     if (error) throw error
@@ -501,6 +557,8 @@ export async function getExistingForecasts() {
 
 export async function clearForecasts() {
   try {
+    const supabase = getSupabaseClient()
+
     const { error } = await supabase.from("forecasts").delete().neq("id", 0) // Delete all rows
 
     if (error) throw error
