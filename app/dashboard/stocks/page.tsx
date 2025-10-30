@@ -157,16 +157,13 @@ export default function StocksPage() {
     setIsUploading(true)
 
     try {
-      if (!productFile || !salesFile) {
-        alert(
-          `${uploadType === "product" ? "Product" : "Sales"} file uploaded successfully! Please upload the ${uploadType === "product" ? "sales" : "product"} file to complete the training.`,
-        )
-        setIsUploadModalOpen(false)
+      if (!productFile && !salesFile) {
+        alert("Please select at least one file")
         setIsUploading(false)
         return
       }
 
-      const result = await trainModel(salesFile, productFile)
+      const result = await trainModel(salesFile || currentFile, productFile || undefined)
 
       if (result.ml_training?.status === "completed") {
         alert(
@@ -176,6 +173,14 @@ export default function StocksPage() {
         setSalesFile(null)
         setProductFile(null)
         window.location.href = "/dashboard/predict"
+      } else if (result.ml_training?.status === "skipped") {
+        alert(
+          `Files uploaded successfully (${result.data_cleaning.rows_uploaded} rows)!\n\n${result.ml_training.message}\n\nYou can view your stock data now. To enable forecasting, start the Python backend server.`,
+        )
+        setIsUploadModalOpen(false)
+        setSalesFile(null)
+        setProductFile(null)
+        window.location.reload()
       } else if (result.ml_training?.status === "failed") {
         alert(
           `Data uploaded successfully (${result.data_cleaning.rows_uploaded} rows), but forecast generation failed: ${result.ml_training.message}. You can manually generate forecasts from the Predict page.`,
