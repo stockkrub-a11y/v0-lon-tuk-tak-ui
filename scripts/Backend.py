@@ -273,6 +273,62 @@ async def check_base_stock():
         print(f"[Backend] base_stock table doesn't exist or error: {str(e)}")
         return {"exists": False, "count": 0}
 
+# --- Helper to load files with fallback headers ---
+def load_file_with_fallback(file_content, possible_headers=[0,1,2,3]):
+    """
+    Try to load Excel/CSV file with multiple header row attempts.
+    Returns (DataFrame, header_row_used)
+    """
+    sku_candidates = [
+        "รหัสสินค้า", 
+        "เลขอ้างอิง SKU (SKU Reference No.)", 
+        "Product_SKU",
+        "SKU",
+        "รหัส",
+        "Code"
+    ]
+    
+    errors = []
+    
+    # Try Excel format first
+    for h in possible_headers:
+        try:
+            df = pd.read_excel(file_content, header=h)
+            df.columns = df.columns.str.strip()
+            for candidate in sku_candidates:
+                if candidate in df.columns:
+                    df = df.rename(columns={candidate: "Product_SKU"}).copy()
+                    print(f"✓ Found Excel with header row {h}, SKU column: {candidate}")
+                    return df, h
+            errors.append(f"Excel header={h}: No SKU column found")
+        except Exception as e:
+            errors.append(f"Excel header={h}: {str(e)}")
+    
+    # Try CSV with different encodings
+    encodings = ['utf-8', 'utf-8-sig', 'cp874', 'tis-620']
+    for encoding in encodings:
+        for h in possible_headers:
+            try:
+                # Convert bytes to string with encoding
+                if isinstance(file_content, bytes):
+                    content = file_content.decode(encoding)
+                else:
+                    content = file_content
+                
+                df = pd.read_csv(io.StringIO(content), header=h)
+                df.columns = df.columns.str.strip()
+                for candidate in sku_candidates:
+                    if candidate in df.columns:
+                        df = df.rename(columns={candidate: "Product_SKU"}).copy()
+                        print(f"✓ Found CSV with encoding {encoding}, header row {h}, SKU column: {candidate}")
+                        return df, h
+                errors.append(f"CSV {encoding} header={h}: No SKU column found")
+            except Exception as e:
+                errors.append(f"CSV {encoding} header={h}: {str(e)}")
+    
+    error_msg = "❌ Could not load file as Excel or CSV. Tried:\n" + "\n".join(errors)
+    raise ValueError(error_msg)
+
 @app.post("/notifications/upload")
 async def upload_stock_files(
     previous_stock: Optional[UploadFile] = File(None),
@@ -282,10 +338,14 @@ async def upload_stock_files(
     try:
         print("[Backend] Processing stock upload...")
         
-        # Read current stock file
+        # Read current stock file with fallback headers
         current_content = await current_stock.read()
-        df_curr = pd.read_excel(io.BytesIO(current_content))
-        print(f"[Backend] Current stock loaded: {len(df_curr)} rows")
+        try:
+            df_curr, header_row = load_file_with_fallback(io.BytesIO(current_content))
+            print(f"[Backend] Current stock loaded (header={header_row}): {len(df_curr)} rows")
+        except Exception as e:
+            print(f"[Backend] Failed to load current stock file: {str(e)}")
+            raise HTTPException(status_code=400, detail=str(e))
         
         # Check if base_stock exists
         base_stock_exists = False
@@ -309,9 +369,12 @@ async def upload_stock_files(
                     detail="Previous stock file is required for first upload"
                 )
             prev_content = await previous_stock.read()
-            # Use header=0 to correctly read Excel files without a skip row
-            df_prev = pd.read_excel(io.BytesIO(prev_content), header=0)
-            print(f"[Backend] Previous stock loaded from file: {len(df_prev)} rows")
+            try:
+                df_prev, header_row = load_file_with_fallback(io.BytesIO(prev_content))
+                print(f"[Backend] Previous stock loaded (header={header_row}): {len(df_prev)} rows")
+            except Exception as e:
+                print(f"[Backend] Failed to load previous stock file: {str(e)}")
+                raise HTTPException(status_code=400, detail=str(e))
         
         df_curr = df_curr.rename(columns={
             'ชื่อสินค้า': 'product_name',
