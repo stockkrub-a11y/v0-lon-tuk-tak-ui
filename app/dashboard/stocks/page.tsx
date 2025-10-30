@@ -39,6 +39,7 @@ export default function StocksPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [salesFile, setSalesFile] = useState<File | null>(null)
   const [productFile, setProductFile] = useState<File | null>(null)
+  const [currentFile, setCurrentFile] = useState<File | null>(null)
   const [isUploading, setIsUploading] = useState(false)
   const [backendConnected, setBackendConnected] = useState(true)
   const [showOfflineBanner, setShowOfflineBanner] = useState(false)
@@ -130,6 +131,7 @@ export default function StocksPage() {
 
   const openUploadModal = (type: "product" | "sale") => {
     setUploadType(type)
+    setCurrentFile(null)
     setIsUploadModalOpen(true)
   }
 
@@ -137,66 +139,75 @@ export default function StocksPage() {
     const file = e.target.files?.[0]
     if (file) {
       console.log("[v0] File selected:", file.name, "Type:", uploadType)
-      if (uploadType === "sale") {
-        setSalesFile(file)
-      } else {
-        setProductFile(file)
-      }
+      setCurrentFile(file)
     }
   }
 
   const handleUpload = async () => {
-    const currentFile = uploadType === "sale" ? salesFile : productFile
-
     if (!currentFile) {
-      alert(`Please select a ${uploadType === "sale" ? "sales" : "product"} file`)
+      alert("Please select a file to upload.")
       return
     }
 
-    console.log("[v0] Starting upload for:", uploadType, "File:", currentFile.name)
+    console.log("[v0] Starting upload for:", uploadType, "file:", currentFile.name)
     setIsUploading(true)
 
     try {
-      if (!productFile && !salesFile) {
-        alert("Please select at least one file")
-        setIsUploading(false)
-        return
-      }
-
-      const result = await trainModel(salesFile || currentFile, productFile || undefined)
-
-      if (result.ml_training?.status === "completed") {
-        alert(
-          `Success! ${result.data_cleaning.rows_uploaded} rows uploaded and ${result.ml_training.forecast_rows} forecasts generated. Redirecting to Predict page...`,
-        )
+      if (uploadType === "product") {
+        setProductFile(currentFile)
+        alert(`Product file "${currentFile.name}" uploaded successfully! Now upload the Sales file to train the model.`)
         setIsUploadModalOpen(false)
-        setSalesFile(null)
-        setProductFile(null)
-        window.location.href = "/dashboard/predict"
-      } else if (result.ml_training?.status === "skipped") {
-        alert(
-          `Files uploaded successfully (${result.data_cleaning.rows_uploaded} rows)!\n\n${result.ml_training.message}\n\nYou can view your stock data now. To enable forecasting, start the Python backend server.`,
-        )
-        setIsUploadModalOpen(false)
-        setSalesFile(null)
-        setProductFile(null)
-        window.location.reload()
-      } else if (result.ml_training?.status === "failed") {
-        alert(
-          `Data uploaded successfully (${result.data_cleaning.rows_uploaded} rows), but forecast generation failed: ${result.ml_training.message}. You can manually generate forecasts from the Predict page.`,
-        )
-        setIsUploadModalOpen(false)
-        setSalesFile(null)
-        setProductFile(null)
-        window.location.reload()
+        setCurrentFile(null)
       } else {
-        alert(
-          `Data uploaded successfully (${result.data_cleaning.rows_uploaded} rows). ${result.ml_training?.message || "Forecast generation was skipped."}`,
-        )
-        setIsUploadModalOpen(false)
-        setSalesFile(null)
-        setProductFile(null)
-        window.location.reload()
+        setSalesFile(currentFile)
+
+        if (!productFile) {
+          alert("Please upload the Product file first before uploading the Sales file.")
+          setIsUploadModalOpen(false)
+          setCurrentFile(null)
+          return
+        }
+
+        console.log("[v0] Training model with product:", productFile.name, "and sales:", currentFile.name)
+        const result = await trainModel(currentFile, productFile)
+
+        if (result.ml_training?.status === "completed") {
+          alert(
+            `Success! ${result.data_cleaning.rows_uploaded} rows uploaded and ${result.ml_training.forecast_rows} forecasts generated. Redirecting to Predict page...`,
+          )
+          setIsUploadModalOpen(false)
+          setSalesFile(null)
+          setProductFile(null)
+          setCurrentFile(null)
+          window.location.href = "/dashboard/predict"
+        } else if (result.ml_training?.status === "skipped") {
+          alert(
+            `Files uploaded successfully (${result.data_cleaning.rows_uploaded} rows)!\n\n${result.ml_training.message}\n\nYou can view your stock data now. To enable forecasting, start the Python backend server.`,
+          )
+          setIsUploadModalOpen(false)
+          setSalesFile(null)
+          setProductFile(null)
+          setCurrentFile(null)
+          window.location.reload()
+        } else if (result.ml_training?.status === "failed") {
+          alert(
+            `Data uploaded successfully (${result.data_cleaning.rows_uploaded} rows), but forecast generation failed: ${result.ml_training.message}. You can manually generate forecasts from the Predict page.`,
+          )
+          setIsUploadModalOpen(false)
+          setSalesFile(null)
+          setProductFile(null)
+          setCurrentFile(null)
+          window.location.reload()
+        } else {
+          alert(
+            `Data uploaded successfully (${result.data_cleaning.rows_uploaded} rows). ${result.ml_training?.message || "Forecast generation was skipped."}`,
+          )
+          setIsUploadModalOpen(false)
+          setSalesFile(null)
+          setProductFile(null)
+          setCurrentFile(null)
+          window.location.reload()
+        }
       }
     } catch (error) {
       console.error("[v0] Upload failed:", error)
@@ -503,16 +514,15 @@ export default function StocksPage() {
                 </p>
               </div>
               <p className="text-xs text-[#938d7a] mt-3 pt-3 border-t border-[#cecabf]/30">
-                Note: Both files are required to train the model. Upload them in any order.
+                Note: Upload Product file first, then Sales file. The model will train automatically after both files
+                are uploaded.
               </p>
             </div>
 
             <div className="border-2 border-dashed border-[#cecabf] rounded-lg p-12 mb-6">
               <div className="flex flex-col items-center justify-center gap-4">
                 <CloudUpload className="w-24 h-24 text-[#cecabf]" />
-                <p className="text-[#938d7a] text-sm">
-                  {(uploadType === "sale" ? salesFile : productFile)?.name || "Drag a file here or click Browse"}
-                </p>
+                <p className="text-[#938d7a] text-sm">{currentFile?.name || "Drag a file here or click Browse"}</p>
               </div>
             </div>
 
@@ -523,7 +533,7 @@ export default function StocksPage() {
               </label>
               <button
                 onClick={handleUpload}
-                disabled={isUploading}
+                disabled={isUploading || !currentFile}
                 className="flex-1 px-6 py-3 bg-[#cecabf] rounded-lg text-black font-medium hover:bg-[#c5c5c5] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isUploading ? "Uploading..." : "Upload"}
