@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import Link from "next/link"
 import { Search, Home, Package, TrendingUp, BookOpen, Bell, Filter, X, Clock } from "lucide-react"
-import { predictSales } from "@/lib/api"
+import { predictSales, getExistingForecasts, clearForecasts } from "@/lib/api"
 
 interface ForecastData {
   sku: string
@@ -29,43 +29,38 @@ export default function PredictPage() {
     try {
       console.log("[v0] Loading existing forecasts...")
       setIsLoading(true)
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/predict/existing`)
 
-      if (response.ok) {
-        const data = await response.json()
-        console.log("[v0] Forecast data received:", data)
+      const data = await getExistingForecasts()
+      console.log("[v0] Forecast data received:", data)
 
-        if (data.forecast && data.forecast.length > 0) {
-          const mapped: ForecastData[] = data.forecast.map((item) => {
-            const forecastDate = new Date(item.forecast_date)
-            return {
-              sku: item.product_sku,
-              forecastDate: forecastDate.toLocaleDateString("en-US", { month: "short", year: "2-digit" }),
-              forecastDateRaw: forecastDate,
-              predictedSales: Math.round(item.predicted_sales).toString(),
-              currentSale: Math.round(item.current_sales).toString(),
-              currentDate: new Date(item.current_date_col).toLocaleDateString("en-US", {
-                month: "short",
-                day: "numeric",
-                year: "numeric",
-              }),
-            }
-          })
+      if (data.forecast && data.forecast.length > 0) {
+        const mapped: ForecastData[] = data.forecast.map((item) => {
+          const forecastDate = new Date(item.forecast_date)
+          return {
+            sku: item.product_sku,
+            forecastDate: forecastDate.toLocaleDateString("en-US", { month: "short", year: "2-digit" }),
+            forecastDateRaw: forecastDate,
+            predictedSales: Math.round(item.predicted_sales).toString(),
+            currentSale: Math.round(item.current_sales).toString(),
+            currentDate: new Date(item.current_date_col).toLocaleDateString("en-US", {
+              month: "short",
+              day: "numeric",
+              year: "numeric",
+            }),
+          }
+        })
 
-          mapped.sort((a, b) => {
-            const skuCompare = a.sku.localeCompare(b.sku)
-            if (skuCompare !== 0) return skuCompare
-            return a.forecastDateRaw.getTime() - b.forecastDateRaw.getTime()
-          })
+        mapped.sort((a, b) => {
+          const skuCompare = a.sku.localeCompare(b.sku)
+          if (skuCompare !== 0) return skuCompare
+          return a.forecastDateRaw.getTime() - b.forecastDateRaw.getTime()
+        })
 
-          setForecastData(mapped)
-          console.log("[v0] Loaded", mapped.length, "forecast records")
-        } else {
-          console.log("[v0] No forecast data available")
-          setForecastData([])
-        }
+        setForecastData(mapped)
+        console.log("[v0] Loaded", mapped.length, "forecast records")
       } else {
-        console.error("[v0] Failed to load forecasts:", response.status)
+        console.log("[v0] No forecast data available")
+        setForecastData([])
       }
     } catch (error) {
       console.error("[v0] Error loading forecasts:", error)
@@ -134,7 +129,9 @@ export default function PredictPage() {
       })
       .catch((error) => {
         console.error("[v0] Prediction failed:", error)
-        alert(`Prediction failed: ${error instanceof Error ? error.message : "Unknown error"}`)
+        alert(
+          `Prediction failed: ${error instanceof Error ? error.message : "Unknown error"}. Make sure the backend server is running for ML predictions.`,
+        )
       })
       .finally(() => {
         setIsLoading(false)
@@ -150,19 +147,12 @@ export default function PredictPage() {
   const handleClearForecasts = async () => {
     if (confirm("Are you sure you want to clear all forecast data? This will delete forecasts from the database.")) {
       try {
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/predict/clear`, {
-          method: "DELETE",
-        })
-
-        if (response.ok) {
-          setForecastData([])
-          alert("Forecast data cleared successfully")
-        } else {
-          alert("Failed to clear forecast data")
-        }
+        await clearForecasts()
+        setForecastData([])
+        alert("Forecast data cleared successfully")
       } catch (error) {
         console.error("[v0] Error clearing forecasts:", error)
-        alert("Failed to clear forecast data. Backend may be offline.")
+        alert("Failed to clear forecast data.")
       }
     }
   }
@@ -388,7 +378,7 @@ export default function PredictPage() {
             <div className="flex items-center justify-between mb-6">
               <div>
                 <h3 className="text-xl font-bold text-black">Predict Function</h3>
-                <p className="text-sm text-[#938d7a]">Choose your parameter</p>
+                <p className="text-sm text-[#938d7a]">Choose your parameter (requires backend server for ML)</p>
               </div>
               <button
                 onClick={() => setIsPredictModalOpen(false)}

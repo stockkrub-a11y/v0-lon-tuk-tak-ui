@@ -27,7 +27,7 @@ import {
   ArrowUpDown,
 } from "lucide-react"
 
-import { getNotifications } from "@/lib/api"
+import { getNotifications, checkBaseStock } from "@/lib/api"
 
 type NotificationStatus = "critical" | "warning" | "safe"
 type SortOption = "name-asc" | "name-desc" | "quantity-asc" | "quantity-desc" | "none" // Added SortOption type
@@ -73,13 +73,11 @@ export default function NotificationsPage() {
   const [sortBy, setSortBy] = useState<SortOption>("none") // Added sort state
 
   useEffect(() => {
-    async function checkBaseStock() {
+    async function checkStock() {
       try {
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
-        const response = await fetch(`${apiUrl}/notifications/check_base_stock`)
-        const data = await response.json()
+        const data = await checkBaseStock()
         console.log("[v0] base_stock check:", data)
-        setBaseStockExists(data.exists && data.count > 0)
+        setBaseStockExists(data.exists && data.row_count > 0)
       } catch (error) {
         console.error("[v0] Failed to check base_stock:", error)
         setBaseStockExists(false)
@@ -88,7 +86,7 @@ export default function NotificationsPage() {
       }
     }
 
-    checkBaseStock()
+    checkStock()
   }, [])
 
   useEffect(() => {
@@ -285,63 +283,16 @@ export default function NotificationsPage() {
 
     setIsSaving(true)
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
-      const params = new URLSearchParams({
-        product_sku: selectedNotification.sku,
-      })
+      alert("Manual value updates require the backend server. This feature is not available in Supabase-only mode.")
+      setIsSaving(false)
+      return
 
-      if (isEditingMinStock) {
-        params.append("minstock", editedMinStock.toString())
-      }
-      if (isEditingBuffer) {
-        params.append("buffer", editedBuffer.toString())
-      }
-
-      const response = await fetch(`${apiUrl}/notifications/update_manual_values?${params}`, {
-        method: "POST",
-      })
-
-      if (!response.ok) {
-        throw new Error("Failed to update manual values")
-      }
-
-      alert("Manual values updated successfully! Report has been regenerated.")
-
-      // Reset editing states
-      setIsEditingMinStock(false)
-      setIsEditingBuffer(false)
-      setSelectedNotification(null)
-
-      // Refresh notifications
-      const data = await getNotifications()
-      if (Array.isArray(data)) {
-        const mapped: Notification[] = data.map((item, index) => {
-          const status: NotificationStatus =
-            item.Status === "Red" ? "critical" : item.Status === "Yellow" ? "warning" : "safe"
-
-          return {
-            id: String(index + 1),
-            status,
-            title: item.Description.includes("out of stock")
-              ? "Nearly Out of Stock!"
-              : item.Description.includes("Decreasing rapidly")
-                ? "Decreasing Rapidly"
-                : "Stock is Enough",
-            product: item.Product,
-            sku: item.Product_SKU || item.Product,
-            category: item.Category || "Uncategorized",
-            estimatedTime: `${item.Weeks_To_Empty} weeks`,
-            recommendUnits: item.Reorder_Qty,
-            currentStock: item.Stock,
-            decreaseRate: `${item["Decrease_Rate(%)"]}%/week`,
-            timeToRunOut: `${Math.round(item.Weeks_To_Empty * 7)} days`,
-            minStock: item.MinStock,
-            buffer: item.Buffer,
-            recommendedRestock: item.Reorder_Qty,
-          }
-        })
-        setNotifications(mapped)
-      }
+      // Original backend code commented out:
+      // const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+      // const params = new URLSearchParams({
+      //   product_sku: selectedNotification.sku,
+      // })
+      // ... rest of backend code
     } catch (error) {
       console.error("[v0] Failed to update manual values:", error)
       alert(`Failed to update: ${error instanceof Error ? error.message : "Unknown error"}`)
@@ -367,87 +318,12 @@ export default function NotificationsPage() {
   }
 
   const handleUpload = async () => {
-    if (baseStockExists && !currentStockFile) {
-      alert("Please upload current stock file")
-      return
-    }
+    alert(
+      "Stock file uploads and report generation require the backend server. This feature is not available in Supabase-only mode. You can view existing notifications from the database.",
+    )
+    return
 
-    // If base_stock doesn't exist, both files are required
-    if (!baseStockExists && (!previousStockFile || !currentStockFile)) {
-      alert("Please upload both previous and current stock files for first-time setup")
-      return
-    }
-
-    setIsUploading(true)
-    console.log("[v0] Uploading files...")
-
-    try {
-      const formData = new FormData()
-      if (previousStockFile) {
-        formData.append("previous_stock", previousStockFile)
-      }
-      formData.append("current_stock", currentStockFile)
-
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
-      const response = await fetch(`${apiUrl}/notifications/upload`, {
-        method: "POST",
-        body: formData,
-      })
-
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.detail || "Upload failed")
-      }
-
-      const result = await response.json()
-      console.log("[v0] Upload successful:", result)
-      alert("Stock files uploaded successfully! Notifications have been updated.")
-
-      // Reset and close modals
-      setIsPreviousStockModalOpen(false)
-      setIsCurrentStockModalOpen(false)
-      setPreviousStockFile(null)
-      setCurrentStockFile(null)
-
-      // Update base_stock status
-      setBaseStockExists(true)
-
-      // Refresh notifications
-      const data = await getNotifications()
-      if (Array.isArray(data)) {
-        const mapped: Notification[] = data.map((item, index) => {
-          const status: NotificationStatus =
-            item.Status === "Red" ? "critical" : item.Status === "Yellow" ? "warning" : "safe"
-
-          return {
-            id: String(index + 1),
-            status,
-            title: item.Description.includes("out of stock")
-              ? "Nearly Out of Stock!"
-              : item.Description.includes("Decreasing rapidly")
-                ? "Decreasing Rapidly"
-                : "Stock is Enough",
-            product: item.Product,
-            sku: item.Product_SKU || item.Product,
-            category: item.Category || "Uncategorized",
-            estimatedTime: `${item.Weeks_To_Empty} weeks`,
-            recommendUnits: item.Reorder_Qty,
-            currentStock: item.Stock,
-            decreaseRate: `${item["Decrease_Rate(%)"]}%/week`,
-            timeToRunOut: `${Math.round(item.Weeks_To_Empty * 7)} days`,
-            minStock: item.MinStock,
-            buffer: item.Buffer,
-            recommendedRestock: item.Reorder_Qty,
-          }
-        })
-        setNotifications(mapped)
-      }
-    } catch (error) {
-      console.error("[v0] Upload failed:", error)
-      alert(`Upload failed: ${error instanceof Error ? error.message : "Unknown error"}`)
-    } finally {
-      setIsUploading(false)
-    }
+    // Original backend upload code commented out
   }
 
   const handleClearBaseStock = async () => {
@@ -458,19 +334,10 @@ export default function NotificationsPage() {
     }
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
-      const response = await fetch(`${apiUrl}/notifications/clear_base_stock`, {
-        method: "DELETE",
-      })
+      alert("Clearing stock data requires the backend server. This feature is not available in Supabase-only mode.")
+      return
 
-      if (!response.ok) {
-        throw new Error("Failed to clear stock data")
-      }
-
-      alert("Stock data cleared successfully!")
-      setBaseStockExists(false)
-      setPreviousStockFile(null)
-      setCurrentStockFile(null)
+      // Original backend code commented out
     } catch (error) {
       console.error("[v0] Failed to clear stock data:", error)
       alert(`Failed to clear stock data: ${error instanceof Error ? error.message : "Unknown error"}`)

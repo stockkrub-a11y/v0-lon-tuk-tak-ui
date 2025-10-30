@@ -21,7 +21,7 @@ import {
   AlertCircle,
   ChevronDown,
 } from "lucide-react"
-import { trainModel } from "@/lib/api"
+import { trainModel, getStockLevels, getStockCategories } from "@/lib/api"
 
 export default function StocksPage() {
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false)
@@ -58,16 +58,13 @@ export default function StocksPage() {
   async function fetchStocks() {
     try {
       console.log("[v0] Fetching stock levels...")
-      const params = new URLSearchParams()
-      if (searchQuery) params.append("search", searchQuery)
-      if (selectedCategory) params.append("category", selectedCategory)
-      if (selectedFlag) params.append("status", selectedFlag)
-      if (sortBy) params.append("sort_by", sortBy)
 
-      const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/stock/levels?${params}`,
-      )
-      const data = await response.json()
+      const data = await getStockLevels({
+        search: searchQuery || undefined,
+        category: selectedCategory || undefined,
+        flag: selectedFlag || undefined,
+        sort_by: sortBy || undefined,
+      })
 
       console.log("[v0] Stock levels response:", data)
 
@@ -95,11 +92,10 @@ export default function StocksPage() {
 
   async function fetchCategories() {
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/stock/categories`)
-      const data = await response.json()
+      const data = await getStockCategories()
       console.log("[v0] Categories response:", data)
       if (data.success) {
-        setCategories(data.data || data.categories || [])
+        setCategories(data.data || [])
       }
     } catch (error) {
       console.error("[v0] Failed to fetch categories:", error)
@@ -220,12 +216,12 @@ export default function StocksPage() {
               {backendConnected ? (
                 <>
                   <Wifi className="w-4 h-4 text-[#00a63e]" />
-                  <span className="text-xs text-[#00a63e] font-medium">Backend Online</span>
+                  <span className="text-xs text-[#00a63e] font-medium">Supabase Connected</span>
                 </>
               ) : (
                 <>
                   <WifiOff className="w-4 h-4 text-[#ea5457]" />
-                  <span className="text-xs text-[#ea5457] font-medium">Backend Offline</span>
+                  <span className="text-xs text-[#ea5457] font-medium">Database Offline</span>
                 </>
               )}
             </div>
@@ -290,13 +286,12 @@ export default function StocksPage() {
               <div className="flex items-start gap-3">
                 <AlertCircle className="w-5 h-5 text-[#eaac54] flex-shrink-0 mt-0.5" />
                 <div className="flex-1">
-                  <h4 className="font-medium text-black mb-1">Backend Server Offline</h4>
+                  <h4 className="font-medium text-black mb-1">Database Connection Error</h4>
                   <p className="text-sm text-[#938d7a] mb-2">
-                    The backend server is not running. Stock data cannot be loaded from the database.
+                    Cannot connect to Supabase. Please check your environment variables.
                   </p>
                   <p className="text-sm text-black font-medium">
-                    To start the backend server, run:{" "}
-                    <code className="bg-white px-2 py-1 rounded">python scripts/Backend.py</code>
+                    Required: NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY
                   </p>
                 </div>
                 <button
@@ -430,7 +425,7 @@ export default function StocksPage() {
                 <p className="text-sm text-[#938d7a]">
                   {backendConnected
                     ? "Please upload stock files in the Notifications page to view stock data here."
-                    : "Start the backend server and upload files in the Notifications page."}
+                    : "Check your Supabase connection and upload files in the Notifications page."}
                 </p>
               </div>
             ) : (
