@@ -1,7 +1,7 @@
 # ================= Backend: Postgres Version =================
 import pandas as pd
 import numpy as np  # Added numpy import for vectorized operations
-from DB_server import engine  # your SQLAlchemy engine
+# from DB_server import engine  # Removed: SQLAlchemy engine no longer used
 
 # Manual overrides
 manual_minstock = {}  # {'Product_SKU': value}
@@ -13,19 +13,8 @@ MAX_BUFFER = 50
 
 # ================= Get latest stock per product =================
 def get_data(week_date):
-    query = f"""
-        SELECT product_name, product_sku, stock_level, "หมวดหมู่" as category
-        FROM stock_data
-        WHERE week_date = '{week_date}'
-        AND uploaded_at = (
-            SELECT MAX(sub.uploaded_at)
-            FROM stock_data AS sub
-            WHERE sub.product_name = stock_data.product_name
-            AND sub.week_date = stock_data.week_date
-        )
-    """
-    df = pd.read_sql(query, engine)
-    return df
+    # Not implemented: Needs migration to Supabase
+    raise NotImplementedError("get_data() needs to be migrated to use Supabase client.")
 
 # ================= Generate Stock Report =================
 def generate_stock_report(df_prev, df_curr):
@@ -113,87 +102,13 @@ def get_notifications():
     """
     print("[Notification] get_notifications() called")
     
-    try:
-        week_dates_query = """
-            SELECT DISTINCT week_date
-            FROM stock_data
-            ORDER BY week_date DESC
-            LIMIT 2
-        """
-        print("[Notification] Querying for week dates...")
-        week_dates = pd.read_sql(week_dates_query, engine)["week_date"].tolist()
-        print(f"[Notification] Found {len(week_dates)} week dates: {week_dates}")
-        
-        if len(week_dates) < 2:
-            print("[Notification] ⚠️ Not enough data - need at least 2 week dates")
-            return {"error": "Not enough data"}
-
-        week_date_curr, week_date_prev = week_dates[0], week_dates[1]
-        print(f"[Notification] Current week: {week_date_curr}, Previous week: {week_date_prev}")
-        
-        print("[Notification] Fetching previous week data...")
-        df_prev = get_data(week_date_prev)
-        print(f"[Notification] Previous week data: {len(df_prev)} rows")
-        
-        print("[Notification] Fetching current week data...")
-        df_curr = get_data(week_date_curr)
-        print(f"[Notification] Current week data: {len(df_curr)} rows")
-
-        if df_prev.empty or df_curr.empty:
-            print("[Notification] ⚠️ No stock data available")
-            return {"error": "No stock data available"}
-
-        print("[Notification] Generating stock report...")
-        report = generate_stock_report(df_prev, df_curr)
-        print(f"[Notification] Generated report with {len(report)} rows")
-        
-        result = report.to_dict(orient="records")
-        print(f"[Notification] ✅ Returning {len(result)} notifications")
-        return result
-        
-    except Exception as e:
-        print(f"[Notification] ❌ Error: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return {"error": str(e)}
+    # Not implemented: Needs migration to Supabase
+    raise NotImplementedError("get_notifications() needs to be migrated to use Supabase client.")
 
 
 def get_notification_detail(product_name: str):
     """
     Returns detailed metrics for one product.
     """
-    week_dates_query = """
-        SELECT DISTINCT week_date
-        FROM stock_data
-        ORDER BY week_date DESC
-        LIMIT 2
-    """
-    week_dates = pd.read_sql(week_dates_query, engine)["week_date"].tolist()
-    if len(week_dates) < 2:
-        return {"error": "Not enough data"}
-
-    week_date_curr, week_date_prev = week_dates[0], week_dates[1]
-    df_prev = get_data(week_date_prev)
-    df_curr = get_data(week_date_curr)
-
-    if df_prev.empty or df_curr.empty:
-        return {"error": "No stock data available"}
-
-    report = generate_stock_report(df_prev, df_curr)
-    row = report.loc[report["Product"] == product_name]
-
-    if row.empty:
-        return {"error": f"Product '{product_name}' not found"}
-
-    record = row.iloc[0].to_dict()
-
-    detail = {
-        "current_stock": record["Stock"],
-        "decrease_rate_per_week": f"{record['Decrease_Rate(%)']}%/week",
-        "time_to_run_out": f"{record['Weeks_To_Empty']} weeks",
-        "min_stock": record["MinStock"],
-        "buffer": record["Buffer"],
-        "recommended_restock": record["Reorder_Qty"],
-    }
-
-    return {"detail": detail}
+    # Not implemented: Needs migration to Supabase
+    raise NotImplementedError("get_notification_detail() needs to be migrated to use Supabase client.")

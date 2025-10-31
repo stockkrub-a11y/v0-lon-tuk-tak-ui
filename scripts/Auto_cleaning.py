@@ -1,53 +1,19 @@
 import os
 import pandas as pd
 from math import ceil
-from sqlalchemy import text, Integer, inspect
 
-def check_db_status(engine):
-    """
-    Quick sanity check for base_data and all_products tables.
-    Shows row counts and sales_date range (if available).
-    """
-    try:
-        inspector = inspect(engine)
-        tables = inspector.get_table_names()
+def check_db_status():
+    # No-op: DB status check removed (engine dependency)
+    pass
 
-        print("\n🔎 Database Status Check:")
-
-        if "base_data" in tables:
-            with engine.connect() as conn:
-                row_count = conn.execute(text("SELECT COUNT(*) FROM base_data")).scalar()
-                min_date = conn.execute(text("SELECT MIN(sales_date) FROM base_data")).scalar()
-                max_date = conn.execute(text("SELECT MAX(sales_date) FROM base_data")).scalar()
-            print(f"   ✅ base_data exists with {row_count:,} rows")
-            print(f"      → sales_date range: {min_date} → {max_date}")
-        else:
-            print("   ⚠️ base_data does not exist")
-
-        if "all_products" in tables:
-            with engine.connect() as conn:
-                row_count = conn.execute(text("SELECT COUNT(*) FROM all_products")).scalar()
-            print(f"   ✅ all_products exists with {row_count:,} rows")
-        else:
-            print("   ⚠️ all_products does not exist")
-
-    except Exception as e:
-        print(f"❌ check_db_status failed: {e}")
-
-def auto_cleaning(sales_path, product_path, engine):
+def auto_cleaning(sales_path, product_path):
     """
     PostgreSQL-safe auto-cleaning: loads sales/product files, aggregates, fills missing,
     deletes overlapping rows, and appends to PostgreSQL table base_data.
     """
 
-    # --- Load base_data from DB (if exists) ---
+    # --- No DB load: just clean the uploaded files ---
     df_base = None
-    try:
-        df_base = pd.read_sql("SELECT * FROM base_data", engine)
-        df_base["sales_date"] = pd.to_datetime(df_base["sales_date"], errors="coerce")
-        df_base = df_base.copy()
-    except Exception:
-        pass  # first run
 
     # --- Helper to load CSV/Excel with fallback headers ---
     def load_excel_with_fallback(path, possible_headers=[0,1,2,3]):
@@ -101,12 +67,8 @@ def auto_cleaning(sales_path, product_path, engine):
     }).copy()
 
     df_new["Product_SKU"] = df_new["Product_SKU"].astype(str).str.strip()
-    df_new["sales_date"] = pd.to_datetime(
-        df_new["sales_date"], dayfirst=True, errors="coerce"
-    ).dt.to_period("M").dt.to_timestamp()
-    df_new["sales_year"] = df_new["sales_date"].dt.year
-    df_new["sales_month"] = df_new["sales_date"].dt.month
 
+    # Ensure we have a sales_date column (try common candidates)
     if "sales_date" not in df_new.columns:
         # Try to find any date-like column
         date_candidates = [col for col in df_new.columns if any(keyword in col.lower() for keyword in ['date', 'วันที่', 'เวลา', 'time'])]
@@ -114,8 +76,18 @@ def auto_cleaning(sales_path, product_path, engine):
             print(f"⚠️ 'sales_date' column not found. Using '{date_candidates[0]}' as sales_date")
             df_new = df_new.rename(columns={date_candidates[0]: "sales_date"}).copy()
         else:
+            # No date column found — assign current month as sales_date for all rows
             available_cols = df_new.columns.tolist()
-            raise ValueError(f"❌ Could not find sales date column. Available columns: {available_cols}")
+            default_date = pd.Timestamp.now().to_period("M").to_timestamp()
+            print(f"⚠️ No date-like column found. Assigning current month ({default_date.date()}) as sales_date for all {len(df_new)} rows. Available columns: {available_cols}")
+            df_new["sales_date"] = default_date
+
+    # Now safe to convert sales_date to period-month timestamps
+    df_new["sales_date"] = pd.to_datetime(
+        df_new["sales_date"], dayfirst=True, errors="coerce"
+    ).dt.to_period("M").dt.to_timestamp()
+    df_new["sales_year"] = df_new["sales_date"].dt.year
+    df_new["sales_month"] = df_new["sales_date"].dt.month
 
     # --- Aggregate sales ---
     summary = (
@@ -222,30 +194,9 @@ def auto_cleaning(sales_path, product_path, engine):
 
     df_base.columns = [col.lower() for col in df_base.columns]
 
-    dtype_mapping = {
-        "total_quantity": Integer,
-        "sales_year": Integer,
-        "sales_month": Integer
-    }
+    # No dtype mapping needed - handled by Supabase
 
-    # --- Delete overlapping rows ---
-    if df_base.shape[0] > 0:
-        min_date = df_base["sales_date"].min().strftime("%Y-%m-%d")
-        max_date = df_base["sales_date"].max().strftime("%Y-%m-%d")
-        skus_list = df_base["product_sku"].unique().tolist()
-        batch_size = 1000
-        n_batches = ceil(len(skus_list) / batch_size)
-
-        with engine.begin() as conn:
-            for i in range(n_batches):
-                batch_skus = skus_list[i*batch_size : (i+1)*batch_size]
-                skus_str = "','".join(batch_skus)
-                delete_sql = text(f"""
-                    DELETE FROM base_data
-                    WHERE product_sku IN ('{skus_str}')
-                      AND sales_date BETWEEN '{min_date}' AND '{max_date}'
-                """)
-                conn.execute(delete_sql)
+    # --- No DB delete: handled in backend if needed ---
 
     print(df_base.dtypes)  # ✅ check column types
     print(df_base.columns.to_list())
@@ -256,13 +207,5 @@ def auto_cleaning(sales_path, product_path, engine):
     # --- Save cleaned CSV ---
     clean_csv_path = r"clean_sales_data.csv"
     df_base.to_csv(clean_csv_path, index=False, encoding="utf-8-sig")
-    # ✅ Insert cleaned data into base_data
-    df_base.to_sql("base_data", engine, if_exists="append", index=False)
-
-    # --- Replace all_products table ---
-    df_base.to_sql("base_data", engine, if_exists="replace", index=False)
-
-    df_products.to_sql("all_products", engine, if_exists="replace", index=False)
-
-    check_db_status(engine)
+    # --- No DB insert: handled in backend ---
     return df_base

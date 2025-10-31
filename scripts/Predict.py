@@ -90,7 +90,13 @@ def update_model_and_train(df):
     print("Starting model update and training...")
 
     df = df.drop(columns=["product_name"])
+    # Ensure dates are datetime
+    if df['sales_date'].dtype == 'object':
+        print("Converting sales_date to datetime...")
+        df['sales_date'] = pd.to_datetime(df['sales_date'])
+    
     latest_date = df['sales_date'].max()
+    print(f"Latest date in data: {latest_date}")
     df_window = df[df['sales_date'] > latest_date - pd.DateOffset(months=ROLLING_WINDOW)].copy()
     df_window = df_window.dropna(subset=['product_sku'])
 
@@ -146,6 +152,10 @@ def update_model_and_train(df):
 def forcast_loop(X_train, y_train, df_window_raw, product_sku_last, base_model, n_forecast=N_FORECAST, retrain_each_step=True):
     start_time = time.time()
     print("Starting forecasting loop...")
+
+    # Ensure dates are datetime
+    if df_window_raw['sales_date'].dtype == 'object':
+        df_window_raw['sales_date'] = pd.to_datetime(df_window_raw['sales_date'])
 
     future = df_window_raw[df_window_raw['sales_date'] == df_window_raw['sales_date'].max()].copy()
     future['product_sku'] = product_sku_last

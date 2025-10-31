@@ -27,7 +27,7 @@ import {
   ArrowUpDown,
 } from "lucide-react"
 
-import { getNotifications, checkBaseStock, trainModel } from "@/lib/api"
+import { getNotifications, checkBaseStock, uploadStockFiles } from "@/lib/api"
 
 type NotificationStatus = "critical" | "warning" | "safe"
 type SortOption = "name-asc" | "name-desc" | "quantity-asc" | "quantity-desc" | "none" // Added SortOption type
@@ -336,24 +336,16 @@ export default function NotificationsPage() {
       console.log("[v0] - Previous file:", previousStockFile?.name || "None")
       console.log("[v0] - Current file:", currentStockFile?.name)
 
-      const result = await trainModel(
-        baseStockExists ? currentStockFile : previousStockFile!,
-        baseStockExists ? undefined : currentStockFile,
+      const result = await uploadStockFiles(
+        baseStockExists ? undefined : previousStockFile,
+        currentStockFile,
       )
 
       console.log("[v0] Upload result:", result)
 
-      if (result.ml_training?.forecast_rows > 0) {
-        alert(
-          `Upload successful!\n\nData Cleaning: ${result.data_cleaning?.status}\nRows: ${result.data_cleaning?.rows_uploaded}\n\nML Training: ${result.ml_training?.status}\nForecasts: ${result.ml_training?.forecast_rows}\n\nRedirecting to Predict page...`,
-        )
-        window.location.href = "/dashboard/predict"
-      } else {
-        alert(
-          `Upload successful!\n\nData Cleaning: ${result.data_cleaning?.status}\nRows: ${result.data_cleaning?.rows_uploaded}\n\n${result.ml_training?.message || "Training completed"}`,
-        )
-        window.location.reload()
-      }
+      // Backend returns a simple success message and notifications_count
+      alert(`Upload successful! ${result.message || "Report generated"}`)
+      window.location.reload()
     } catch (error) {
       console.error("[v0] Upload failed:", error)
       alert(`Upload failed: ${error instanceof Error ? error.message : "Unknown error"}`)

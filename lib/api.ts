@@ -643,6 +643,41 @@ export async function trainModel(salesFile: File, productFile?: File) {
   return await response.json()
 }
 
+/**
+ * Upload previous/current stock files to backend notifications endpoint.
+ * previousFile: optional (for first-time upload), currentFile: required
+ */
+export async function uploadStockFiles(previousFile?: File | null, currentFile?: File | null) {
+  const API_BASE_URL_LOCAL = process.env.NEXT_PUBLIC_API_URL || API_BASE_URL
+
+  if (!currentFile) {
+    throw new Error("Current stock file is required")
+  }
+
+  const formData = new FormData()
+  // Backend expects fields: previous_stock (optional), current_stock (required)
+  if (previousFile) formData.append("previous_stock", previousFile)
+  formData.append("current_stock", currentFile)
+
+  const response = await fetch(`${API_BASE_URL_LOCAL}/notifications/upload`, {
+    method: "POST",
+    body: formData,
+  })
+
+  if (!response.ok) {
+    let errMsg = `Upload failed: ${response.status}`
+    try {
+      const json = await response.json()
+      errMsg = json.detail || json.message || errMsg
+    } catch (e) {
+      // ignore
+    }
+    throw new Error(errMsg)
+  }
+
+  return await response.json()
+}
+
 // Helper function to parse Excel files
 async function parseExcelFile(file: File): Promise<any[]> {
   // This is a placeholder - you'll need to implement actual Excel parsing
