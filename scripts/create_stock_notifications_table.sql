@@ -2,6 +2,8 @@
 CREATE TABLE IF NOT EXISTS stock_notifications (
     id SERIAL PRIMARY KEY,
     "Product" VARCHAR(255) NOT NULL,
+    product_sku VARCHAR(255),
+    category VARCHAR(255),
     "Stock" INTEGER NOT NULL,
     "Last_Stock" INTEGER NOT NULL,
     "Decrease_Rate(%)" NUMERIC(10, 2),
@@ -13,7 +15,8 @@ CREATE TABLE IF NOT EXISTS stock_notifications (
     "Description" TEXT,
     unchanged_counter NUMERIC(10, 2) DEFAULT 0,
     flag VARCHAR(50) DEFAULT 'stage',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Create index for faster queries
@@ -25,3 +28,9 @@ ON stock_notifications("Product");
 
 CREATE INDEX IF NOT EXISTS idx_stock_notifications_flag 
 ON stock_notifications(flag);
+
+CREATE INDEX IF NOT EXISTS idx_stock_notifications_product_sku
+ON stock_notifications(product_sku);
+
+CREATE INDEX IF NOT EXISTS idx_stock_notifications_category
+ON stock_notifications(category);
