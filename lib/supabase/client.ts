@@ -1,6 +1,12 @@
-import { createClient as createSupabaseClient } from "@supabase/supabase-js"
+import { createClient as createSupabaseClient, SupabaseClient } from "@supabase/supabase-js"
+
+let supabaseInstance: SupabaseClient | null = null
 
 export function createClient() {
+  if (supabaseInstance) {
+    return supabaseInstance
+  }
+
   const supabaseUrl =
     process.env.NEXT_PUBLIC_SUPABASE_URL ||
     (typeof window !== "undefined"
@@ -19,9 +25,19 @@ export function createClient() {
   console.log("[v0] Supabase URL:", supabaseUrl)
   console.log("[v0] Supabase Key:", supabaseKey ? "✓ Configured" : "✗ Missing")
 
-  return createSupabaseClient(supabaseUrl, supabaseKey)
+  supabaseInstance = createSupabaseClient(supabaseUrl, supabaseKey, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+    },
+  })
+
+  return supabaseInstance
 }
 
 export function getSupabaseClient() {
-  return createClient()
+  if (!supabaseInstance) {
+    return createClient()
+  }
+  return supabaseInstance
 }

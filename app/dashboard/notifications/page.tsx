@@ -117,22 +117,24 @@ export default function NotificationsPage() {
           return {
             id: String(index + 1),
             status,
-            title: item.Description.includes("out of stock")
-              ? "Nearly Out of Stock!"
-              : item.Description.includes("Decreasing rapidly")
-                ? "Decreasing Rapidly"
-                : "Stock is Enough",
+            title: item.Description && (
+              item.Description.includes("out of stock")
+                ? "Nearly Out of Stock!"
+                : item.Description.includes("Decreasing rapidly")
+                  ? "Decreasing Rapidly"
+                  : "Stock is Enough"
+            ),
             product: item.Product,
             sku: item.Product_SKU || item.Product,
             category: item.Category || "Uncategorized", // Added Category mapping
-            estimatedTime: `${item.Weeks_To_Empty} weeks`,
-            recommendUnits: item.Reorder_Qty,
-            currentStock: item.Stock,
-            decreaseRate: `${item["Decrease_Rate(%)"]}%/week`,
-            timeToRunOut: `${Math.round(item.Weeks_To_Empty * 7)} days`,
-            minStock: item.MinStock,
-            buffer: item.Buffer,
-            recommendedRestock: item.Reorder_Qty,
+            estimatedTime: `${item.Weeks_To_Empty || 0} weeks`,
+            recommendUnits: item.Reorder_Qty || 0,
+            currentStock: item.Stock || 0,
+            decreaseRate: `${item["Decrease_Rate(%)"] || 0}%/week`,
+            timeToRunOut: `${Math.round((item.Weeks_To_Empty || 0) * 7)} days`,
+            minStock: item.MinStock || 0,
+            buffer: item.Buffer || 0,
+            recommendedRestock: item.Reorder_Qty || 0,
           }
         })
         console.log("[v0] Mapped notifications:", mapped.length)

@@ -16,14 +16,14 @@ export async function getStockLevels(params?: {
 
     let query = supabase
       .from("base_stock")
-      .select(`product_name, product_sku, stock_level, "หมวดหมู่", flag, unchanged_counter`)
+      .select(`product_name, product_sku, stock_level, category, flag, unchanged_counter`)
 
     // Apply filters
     if (params?.search) {
       query = query.or(`product_name.ilike.%${params.search}%,product_sku.ilike.%${params.search}%`)
     }
     if (params?.category) {
-      query = query.eq('"หมวดหมู่"', params.category)
+      query = query.eq('category', params.category)
     }
     if (params?.flag) {
       query = query.eq("flag", params.flag)
@@ -41,8 +41,8 @@ export async function getStockLevels(params?: {
     const { data, error } = await query
 
     if (error) {
-      console.error("[v0] Supabase error:", error)
-      throw error
+      console.error("[v0] Supabase error:", error.message, error)
+      return { success: false, data: [], total: 0, error: error.message }
     }
 
     console.log("[v0] Successfully fetched", data?.length || 0, "stock items")
@@ -54,7 +54,7 @@ export async function getStockLevels(params?: {
         product_sku: item.product_sku,
         stock_level: item.stock_level,
         quantity: item.stock_level,
-        category: item["หมวดหมู่"],
+        category: item.category,
         flag: item.flag,
         status: item.flag,
         unchanged_counter: item.unchanged_counter,
@@ -73,15 +73,15 @@ export async function getStockCategories() {
 
     console.log("[v0] Fetching stock categories")
 
-    const { data, error } = await supabase.from("base_stock").select(`"หมวดหมู่"`).not('"หมวดหมู่"', "is", null)
+    const { data, error } = await supabase.from("base_stock").select("category").not("category", "is", null)
 
     if (error) {
-      console.error("[v0] Supabase error:", error)
-      throw error
+      console.error("[v0] Supabase error:", error.message, error)
+      return { success: false, data: [], error: error.message }
     }
 
     // Get unique categories
-    const categories = [...new Set(data.map((item) => item["หมวดหมู่"]))]
+    const categories = [...new Set(data.map((item) => item.category))];
 
     console.log("[v0] Successfully fetched", categories.length, "categories")
 
@@ -90,8 +90,9 @@ export async function getStockCategories() {
       data: categories.filter(Boolean),
     }
   } catch (error) {
-    console.error("[v0] Failed to fetch categories:", error)
-    return { success: false, data: [] }
+    const message = error instanceof Error ? error.message : 'Unknown error'
+    console.error("[v0] Failed to fetch categories:", message)
+    return { success: false, data: [], error: message }
   }
 }
 
@@ -119,22 +120,24 @@ export async function getNotifications() {
     // common variants to stable keys.
     return data.map((item: any) => {
       console.log('[v0] Raw notification item:', item);
-      return {
-        product: item.product ?? item.Product ?? item.product_name ?? item.Product_name ?? "",
-        product_sku: item.product_sku ?? item.Product_SKU ?? item.ProductSKU ?? item.ProductSku ?? "",
-        category: item.category ?? item.Category ?? item['หมวดหมู่'] ?? "",
-        stock: Number(item.stock ?? item.Stock ?? item.stock_level ?? 0) || 0,
-        last_stock: Number(item.last_stock ?? item.Last_Stock ?? 0) || 0,
-        decrease_rate: Number(item.decrease_rate ?? item["Decrease_Rate(%)"] ?? 0) || 0,
-        weeks_to_empty: Number(item.weeks_to_empty ?? item.Weeks_To_Empty ?? 0) || 0,
-        minstock: Number(item.minstock ?? item.MinStock ?? item.minStock ?? 0) || 0,
-        buffer: Number(item.buffer ?? item.Buffer ?? 0) || 0,
-        reorder_qty: Number(item.reorder_qty ?? item.Reorder_Qty ?? 0) || 0,
-        status: item.status ?? item.Status ?? "",
-        description: item.description ?? item.Description ?? "",
+
+      const normalizedItem = {
+        Product: item.product ?? item.Product ?? item.product_name ?? item.Product_name ?? "",
+        Product_SKU: item.product_sku ?? item.Product_SKU ?? item.ProductSKU ?? item.ProductSku ?? "",
+        Category: item.category ?? item.Category ?? item['หมวดหมู่'] ?? "",
+        Stock: Number(item.stock ?? item.Stock ?? item.stock_level ?? 0) || 0,
+        Last_Stock: Number(item.last_stock ?? item.Last_Stock ?? 0) || 0,
+        "Decrease_Rate(%)": Number(item.decrease_rate ?? item["Decrease_Rate(%)"] ?? 0) || 0,
+        Weeks_To_Empty: Number(item.weeks_to_empty ?? item.Weeks_To_Empty ?? 0) || 0,
+        MinStock: Number(item.minstock ?? item.MinStock ?? item.minStock ?? 0) || 0,
+        Buffer: Number(item.buffer ?? item.Buffer ?? 0) || 0,
+        Reorder_Qty: Number(item.reorder_qty ?? item.Reorder_Qty ?? 0) || 0,
+        Status: item.status ?? item.Status ?? "Green",
+        Description: item.description ?? item.Description ?? "Stock is sufficient",
         // keep original raw item for debugging
         _raw: item,
       }
+      return normalizedItem;
     })
   } catch (error) {
     console.error("[v0] Failed to fetch notifications:", error)
