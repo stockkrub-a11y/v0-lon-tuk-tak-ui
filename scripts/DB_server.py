@@ -89,8 +89,7 @@ def insert_data(table_name: str, data: dict | list):
                 except Exception:
                     # Fallback: set None for problematic values
                     sanitized[k] = None
-            sanitized = {k.lower(): v for k, v in sanitized.items()}
-            return sanitized        
+            return sanitized
 
         total_records = len(data) if isinstance(data, list) else 1
         print(f"[DB] Inserting {total_records} records into {table_name}")
@@ -101,91 +100,14 @@ def insert_data(table_name: str, data: dict | list):
         else:
             clean_data = sanitize_record(data)
 
-        # If it's a list of records, handle batches efficiently
-        if isinstance(clean_data, list):
-            # Fetch table column names from the database to avoid inserting unknown columns
-            try:
-                rpc_query = (
-                    "SELECT column_name FROM information_schema.columns "
-                    f"WHERE table_name = '{table_name}'"
-                )
-                schema_res = supabase.rpc('exec_sql', {'query': rpc_query}).execute()
-                schema_cols = []
-                if schema_res and getattr(schema_res, 'data', None):
-                    schema_cols = [r['column_name'] for r in schema_res.data if 'column_name' in r]
-                # Build lookup maps (case-insensitive)
-                cols_set = set(schema_cols)
-                cols_lower_map = {c.lower(): c for c in schema_cols}
-                if len(schema_cols) == 0:
-                    print(f"[DB] Warning: could not fetch schema for table '{table_name}', proceeding without filtering")
-                else:
-                    # Filter each record to only include columns that exist in the table
-                    filtered = []
-                    dropped_count = 0
-                    for rec in clean_data:
-                        new_rec = {}
-                        for k, v in rec.items():
-                            if k in cols_set:
-                                new_rec[k] = v
-                            else:
-                                mapped = cols_lower_map.get(k.lower())
-                                if mapped:
-                                    new_rec[mapped] = v
-                                else:
-                                    dropped_count += 1
-                        filtered.append(new_rec)
-                    clean_data = filtered
-                    if dropped_count > 0:
-                        print(f"[DB] Notice: dropped {dropped_count} fields that don't exist in '{table_name}' before insert")
-            except Exception as e:
-                print(f"[DB] Warning: failed to fetch/filter schema for table '{table_name}': {e}")
-            # Increase batch size for better performance
-            batch_size = 2000
-            total_batches = (len(clean_data) + batch_size - 1) // batch_size
-            
-            # If this is base_data table, optimize the deletion process
-            if table_name == 'base_data':
-                try:
-                    # Extract unique product SKUs
-                    product_skus = list(set(
-                        record['product_sku'] 
-                        for record in clean_data 
-                        if 'product_sku' in record
-                    ))
-                    
-                    # Delete in chunks of 100 SKUs for better performance
-                    sku_batch_size = 100
-                    print(f"[DB] Clearing existing data for {len(product_skus)} products...")
-                    for i in range(0, len(product_skus), sku_batch_size):
-                        sku_batch = product_skus[i:i + sku_batch_size]
-                        supabase.table(table_name)\
-                            .delete()\
-                            .in_('product_sku', sku_batch)\
-                            .execute()
-                    print("[DB] ✅ Existing data cleared")
-                except Exception as e:
-                    print(f"[DB] Warning: Failed to delete existing records: {str(e)}")
-            
-            # Insert in optimized batches with progress tracking
-            print(f"[DB] Starting bulk insert of {len(clean_data)} records in {total_batches} batches")
-            import time
-            start_time = time.time()
-            
+        # If it's a list of records, insert in batches of 1000
+        if isinstance(clean_data, list) and len(clean_data) > 1000:
+            batch_size = 1000
             for i in range(0, len(clean_data), batch_size):
-                batch = clean_data[i:i + batch_size]
-                batch_num = i//batch_size + 1
-                
-                # Calculate progress and ETA
-                progress = (batch_num / total_batches) * 100
-                elapsed = time.time() - start_time
-                eta = (elapsed / batch_num) * (total_batches - batch_num) if batch_num > 0 else 0
-                
-                print(f"[DB] Processing batch {batch_num}/{total_batches} ({progress:.1f}%) - ETA: {eta:.1f}s")
+                batch = clean_data[i : i + batch_size]
+                print(f"[DB] Inserting batch {i//batch_size + 1}/{(len(clean_data) + batch_size - 1)//batch_size}")
                 result = supabase.table(table_name).insert(batch).execute()
-                
-                records_processed = min(i + batch_size, len(clean_data))
-                rate = records_processed / (time.time() - start_time)
-                print(f"[DB] ✅ Batch {batch_num} complete - {rate:.0f} records/sec")
+                print(f"[DB] ✅ Batch {i//batch_size + 1} inserted successfully")
         else:
             result = supabase.table(table_name).insert(clean_data).execute()
 
@@ -223,15 +145,10 @@ def delete_data(table_name: str, match_column: str, match_value: any):
     """
     try:
         # Special case: if match_value == '*' or None, delete all rows from the table
-        # Use key column check based on table name
+        # PostgREST/Supabase rejects DELETE without a WHERE clause; use a safe predicate
         if match_value == '*' or match_value is None:
-            if table_name == 'forecast_output':
-                # For forecast_output, use forecast_date to match all rows
-                # Setting a date far in the past ensures we match all records
-                result = supabase.table(table_name).delete().gte('forecast_date', '1900-01-01').execute()
-            else:
-                # For other tables with 'id' primary key
-                result = supabase.table(table_name).delete().neq('id', 0).execute()
+            # Assume table has integer primary key 'id' starting from 1; delete rows where id != 0
+            result = supabase.table(table_name).delete().neq('id', 0).execute()
         else:
             result = supabase.table(table_name).delete().eq(match_column, match_value).execute()
         return result.data

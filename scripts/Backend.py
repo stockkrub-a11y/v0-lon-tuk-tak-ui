@@ -303,36 +303,17 @@ async def upload_stock_files(
         })
         df_curr["stock_level"] = pd.to_numeric(df_curr["stock_level"], errors='coerce').fillna(0).astype(int)
         df_prev["stock_level"] = pd.to_numeric(df_prev["stock_level"], errors='coerce').fillna(0).astype(int)
-        df_curr = df_curr.drop(columns=['#'], errors='ignore')
-        df_prev = df_prev.drop(columns=['#'], errors='ignore')
-
+        
         try:
             # Save current stock data to Supabase
             print("[Backend] Saving current stock data to Supabase...")
-            # Filter out rows with null values in essential fields
-            df_curr = df_curr.dropna(subset=['product_name', 'Product_SKU'])
-            
-            # Prepare data matching the base_stock table schema
-            df_curr_dict = []
+            df_curr_dict = df_curr.to_dict(orient='records')
             now = pd.Timestamp.now()
-            
-            for _, row in df_curr.iterrows():
-                # Skip rows where essential fields are empty strings
-                if not row.get('product_name') or not row.get('Product_SKU'):
-                    continue
-                    
-                record = {
-                    'product_name': row.get('product_name'),
-                    'product_sku': row.get('Product_SKU'),  # Note the case difference
-                    'stock_level': int(row.get('stock_level', 0)),
-                    'category': row.get('category') if pd.notna(row.get('category')) else '',
-                    'flag': 'stage',  # Default value
-                    'unchanged_counter': 0,  # Default value
-                    'created_at': now,
-                    'updated_at': now
-                }
-                df_curr_dict.append(record)
-
+            for record in df_curr_dict:
+                record['created_at'] = now
+                record['updated_at'] = now
+                record['week_date'] = now.strftime('%Y-%m-%d')
+                record['uploaded_at'] = now
             # Clear and insert into base_stock (raw current stock)
             delete_data('base_stock', 'product_sku', '*')  # '*' means all
             res_base = insert_data('base_stock', df_curr_dict)
@@ -491,7 +472,7 @@ async def upload_stock_files(
                 'product_name': row.get('product_name', ''),
                 'product_sku': product_sku,
                 'stock_level': row.get('stock_level', 0),
-                'category': row.get('category', ''),  # Use 'category' instead of 'หมวดหมู่'
+                'หมวดหมู่': row.get('category', ''),
                 'unchanged_counter': counter_map.get(product_sku, 0),
                 'flag': flag_map.get(product_sku, 'stage'),
                 'updated_at': datetime.now()
@@ -648,8 +629,7 @@ async def get_stock_levels(
         print("[Backend] Fetching stock levels from base_stock...")
         df = execute_query("SELECT * FROM base_stock")
         if category:
-            # Use the 'category' column name instead of 'หมวดหมู่'
-            df = df[df['category'] == category]
+            df = df[df['หมวดหมู่'] == category]
         if status:
             df = df[df['flag'] == status]
         if sort_by == "quantity_asc":
@@ -678,8 +658,7 @@ async def get_stock_categories():
         print("[Backend] Fetching stock categories...")
         
         try:
-            # Use the 'category' column name instead of 'หมวดหมู่'
-            df = execute_query("SELECT DISTINCT category FROM base_stock")
+            df = execute_query("SELECT DISTINCT \"หมวดหมู่\" as category FROM base_stock")
             df = df[df['category'].notnull()]
             if not df.empty:
                 categories = df['category'].tolist()
@@ -969,18 +948,12 @@ async def train_model(
                     if forecast_results and len(forecast_results) > 0:
                         import pandas as pd
                         from datetime import datetime
-                        from DB_server import insert_data, delete_data, update_data
+                        from DB_server import insert_data, delete_data
                         
                         # Convert forecast results to DataFrame
                         print("[Backend] Processing forecast results...")
                         forecast_df = pd.DataFrame(forecast_results)
                         print(f"[Backend] Forecast columns: {forecast_df.columns.tolist()}")
-                        
-                        # Convert sales columns to integers
-                        if 'predicted_sales' in forecast_df.columns:
-                            forecast_df['predicted_sales'] = forecast_df['predicted_sales'].fillna(0).astype(int)
-                        if 'current_sales' in forecast_df.columns:
-                            forecast_df['current_sales'] = forecast_df['current_sales'].fillna(0).astype(int)
                         
                         # Add timestamp
                         now = datetime.now()
@@ -998,25 +971,18 @@ async def train_model(
                                 elif isinstance(value, datetime):
                                     record[key] = value.isoformat()
                         
-                        # Bulk update all forecasts at once
-                        print("[Backend] Updating forecasts in bulk...")
-                        try:
-                            # First clear all existing forecasts
-                            delete_data('forecast_output', 'product_sku', '*')
-                            
-                            # Then bulk insert all new forecasts at once
-                            result = insert_data('forecast_output', records)
-                            
-                            if result is not None:
-                                success_count = len(records)
-                                print(f"[Backend] ✅ Successfully saved {success_count} forecasts to forecast_output")
-                                response["ml_training"]["forecast_rows"] = success_count
-                                response["ml_training"]["message"] = f"Model trained and {success_count} forecasts generated and saved to forecast_output"
-                            else:
-                                print("[Backend] ⚠️ Failed to save forecasts to forecast_output")
-                                response["ml_training"]["message"] = "Model trained but failed to save forecasts"
-                        except Exception as e:
-                            print(f"[Backend] Error during bulk forecast update: {str(e)}")
+                        # Clear old forecasts and insert new ones
+                        print("[Backend] Clearing old forecasts...")
+                        delete_data('forecast_output', 'product_sku', '*')
+                        
+                        print("[Backend] Inserting new forecasts...")
+                        result = insert_data('forecast_output', records)
+                        if result is not None:
+                            print(f"[Backend] ✅ Successfully saved {len(records)} forecasts to forecast_output")
+                            response["ml_training"]["forecast_rows"] = len(records)
+                            response["ml_training"]["message"] = f"Model trained and {len(records)} forecasts generated and saved to forecast_output"
+                        else:
+                            print("[Backend] ⚠️ Failed to save forecasts to forecast_output")
                             response["ml_training"]["message"] = "Model trained but failed to save forecasts"
                     else:
                         response["ml_training"]["message"] = "Model trained but no forecasts generated"
@@ -1050,7 +1016,7 @@ async def train_model(
 
 @app.get("/predict/existing")
 async def get_existing_forecasts():
-    """Get existing forecast data from the forecast_output table"""
+    """Get existing forecast data from the forecasts table"""
     try:
         print("[Backend] Fetching existing forecasts...")
         
@@ -1064,7 +1030,7 @@ async def get_existing_forecasts():
                     current_sales,
                     current_date_col,
                     created_at
-                FROM forecast_output
+                FROM forecasts
                 ORDER BY product_sku ASC, forecast_date ASC
             """)
             
@@ -1180,9 +1146,8 @@ async def predict_sales(n_forecast: int = Query(3, description="Number of months
                     record[key] = value.isoformat()
         
         # Clear old forecasts and insert new ones
-        # Use forecast_output table (frontend expects forecast_output / backend get_existing_forecasts reads this)
-        delete_data('forecast_output', 'product_sku', '*')
-        result = insert_data('forecast_output', records)
+        delete_data('forecasts', 'product_sku', '*')
+        result = insert_data('forecasts', records)
         if result is None:
             print("[Backend] Failed to save forecasts to Supabase")
             raise HTTPException(
@@ -1219,8 +1184,7 @@ async def clear_forecasts():
     """Clear all forecast data"""
     try:
         print("[Backend] Clearing forecasts...")
-        # Clear the forecast_output table instead of 'forecasts'
-        result = delete_data('forecast_output', 'product_sku', '*')
+        result = delete_data('forecasts', 'product_sku', '*')
         if result is None:
             raise HTTPException(
                 status_code=500, 

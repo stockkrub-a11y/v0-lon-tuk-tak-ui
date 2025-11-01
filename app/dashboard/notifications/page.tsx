@@ -117,39 +117,28 @@ export default function NotificationsPage() {
         const mapped: Notification[] = data.map((item, index) => {
           console.log(`[v0] Mapping item ${index}:`, item)
 
-          // Use safe accessors and defaults to avoid runtime errors when API returns
-          // objects missing expected keys (Description, Status, Weeks_To_Empty, etc.)
-          const rawStatus = item?.Status ?? ""
-          const status: NotificationStatus = rawStatus === "Red" ? "critical" : rawStatus === "Yellow" ? "warning" : "safe"
-
-          const desc = item?.Description ?? ""
-          const product = item?.Product ?? ""
-          const sku = item?.Product_SKU ?? product
-          const category = item?.Category ?? "Uncategorized"
-          const weeks = Number(item?.Weeks_To_Empty) || 0
-          const reorderQty = Number(item?.Reorder_Qty) || 0
-          const stock = Number(item?.Stock) || 0
-          const decreaseRateRaw = item?.["Decrease_Rate(%)"] ?? 0
+          const status: NotificationStatus =
+            item.Status === "Red" ? "critical" : item.Status === "Yellow" ? "warning" : "safe"
 
           return {
             id: String(index + 1),
             status,
-            title: desc.includes("out of stock")
+            title: item.Description.includes("out of stock")
               ? "Nearly Out of Stock!"
-              : desc.includes("Decreasing rapidly")
+              : item.Description.includes("Decreasing rapidly")
                 ? "Decreasing Rapidly"
                 : "Stock is Enough",
-            product,
-            sku,
-            category, // Added Category mapping
-            estimatedTime: `${weeks} weeks`,
-            recommendUnits: reorderQty,
-            currentStock: stock,
-            decreaseRate: `${decreaseRateRaw}%/week`,
-            timeToRunOut: `${Math.round(weeks * 7)} days`,
-            minStock: Number(item?.MinStock) || 0,
-            buffer: Number(item?.Buffer) || 0,
-            recommendedRestock: reorderQty,
+            product: item.Product,
+            sku: item.Product_SKU || item.Product,
+            category: item.Category || "Uncategorized", // Added Category mapping
+            estimatedTime: `${item.Weeks_To_Empty} weeks`,
+            recommendUnits: item.Reorder_Qty,
+            currentStock: item.Stock,
+            decreaseRate: `${item["Decrease_Rate(%)"]}%/week`,
+            timeToRunOut: `${Math.round(item.Weeks_To_Empty * 7)} days`,
+            minStock: item.MinStock,
+            buffer: item.Buffer,
+            recommendedRestock: item.Reorder_Qty,
           }
         })
         console.log("[v0] Mapped notifications:", mapped.length)
