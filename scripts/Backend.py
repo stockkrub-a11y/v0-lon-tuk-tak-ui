@@ -347,7 +347,8 @@ async def upload_stock_files(
             'รหัสสินค้า': 'product_sku',
             'จำนวนคงเหลือ': 'stock_level',
             'จำนวน': 'stock_level',
-            'หมวดหมู่': 'category'
+            'หมวดหมู่': 'category',
+            "หมวดหมู่ย่อย" : 'category'
         })
         
         # Rename columns in previous stock data
@@ -357,18 +358,24 @@ async def upload_stock_files(
                 'รหัสสินค้า': 'product_sku',
                 'จำนวนคงเหลือ': 'stock_level',
                 'จำนวน': 'stock_level',
-                'หมวดหมู่': 'category'
+                'หมวดหมู่': 'category',
+                "หมวดหมู่ย่อย" : 'category' 
             })
         df_curr["stock_level"] = pd.to_numeric(df_curr["stock_level"], errors='coerce').fillna(0).astype(int)
         df_prev["stock_level"] = pd.to_numeric(df_prev["stock_level"], errors='coerce').fillna(0).astype(int)
-        
+        # Normalize column names (handle upper/lowercase automatically)
+        df_curr.columns = df_curr.columns.str.strip().str.lower()
+        df_prev.columns = df_prev.columns.str.strip().str.lower()
+        print("[Debug] df_curr columns:", df_curr.columns.tolist())
+        df_curr = df_curr.dropna(subset=['product_sku','category'])
+        df_prev = df_prev.dropna(subset=['product_sku','category'])
         try:
             # Save current stock data to Supabase
             print("[Backend] Saving current stock data to Supabase...")
             
             # Ensure required columns exist and have correct names
             required_columns = {
-                'Product_SKU': 'product_sku',
+                'product_sku': 'product_sku',
                 'product_name': 'product_name',
                 'stock_level': 'stock_level',
                 'category': 'category'
@@ -377,6 +384,7 @@ async def upload_stock_files(
             # Validate required columns
             missing_columns = [col for col in required_columns.keys() if col not in df_curr.columns]
             if missing_columns:
+                print(f"[Backend] Columns found in df_curr: {df_curr.columns.tolist()}")
                 raise ValueError(f"Missing required columns: {', '.join(missing_columns)}")
                 
             # Rename columns to match database schema
@@ -483,6 +491,22 @@ async def upload_stock_files(
             report_df = generate_stock_report(df_prev, df_curr)
             print(f"[Backend] Report generated: {len(report_df)} items")
 
+            # Convert report columns to lowercase to match database
+            column_mapping = {
+                'Product_SKU': 'product_sku',
+                'Stock': 'stock_level',
+                'Last_Stock': 'last_stock',
+                'Status': 'status',
+                'Description': 'description',
+                'Min_Stock': 'min_stock',
+                'Buffer': 'reorder_qty',
+                'WeeksToEmpty': 'weeks_to_empty',
+                'DecreaseRate': 'decrease_rate'
+            }
+
+            # Rename columns to match the database schema
+            report_df = report_df.rename(columns=column_mapping)
+
             # Save report to stock_notifications
             report_df['unchanged_counter'] = 0
             report_df['flag'] = 'stage'
@@ -490,6 +514,13 @@ async def upload_stock_files(
             report_df['updated_at'] = now
             report_dict = report_df.to_dict(orient='records')
             delete_data('stock_notifications', 'product_sku', '*')
+
+            # Log sample record before insertion
+            if report_dict:
+                print("[Backend] Sample record before insertion:")
+                for k, v in report_dict[0].items():
+                    print(f"  {k}: {type(v)} = {v}")
+
             res_notif = insert_data('stock_notifications', report_dict)
             if res_notif is None:
                 print("[Backend] ❌ insert_data returned None for stock_notifications")
@@ -510,9 +541,9 @@ async def upload_stock_files(
         # Calculate flags based on stock changes
         print("[Backend] Calculating stock flags...")
         for idx, row in report_df.iterrows():
-            product_sku = row.get('Product_SKU', '')
-            current_stock_level = row.get('Stock', 0)
-            last_stock_level = row.get('Last_Stock', 0)
+            product_sku = row.get('product_sku', '')  # Using lowercase column names
+            current_stock_level = row.get('stock_level', 0)
+            last_stock_level = row.get('last_stock', 0)
             
             # Get previous counter and flag from base_stock if exists
             prev_counter = 0
@@ -545,8 +576,8 @@ async def upload_stock_files(
         
         print("[Backend] Updating base_stock table...")
         
-        flag_map = dict(zip(report_df['Product_SKU'], report_df['flag']))
-        counter_map = dict(zip(report_df['Product_SKU'], report_df['unchanged_counter']))
+        flag_map = dict(zip(report_df['product_sku'], report_df['flag']))
+        counter_map = dict(zip(report_df['product_sku'], report_df['unchanged_counter']))
         
         # Build base_stock_df with proper alignment
         base_stock_data = []
@@ -556,7 +587,7 @@ async def upload_stock_files(
                 'product_name': row.get('product_name', ''),
                 'product_sku': product_sku,
                 'stock_level': row.get('stock_level', 0),
-                'หมวดหมู่': row.get('category', ''),
+                'category': row.get('category', ''),  # Changed from 'หมวดหมู่' to match schema
                 'unchanged_counter': counter_map.get(product_sku, 0),
                 'flag': flag_map.get(product_sku, 'stage'),
                 'updated_at': datetime.now()
@@ -568,21 +599,7 @@ async def upload_stock_files(
         delete_data('base_stock', 'product_sku', '*')
         insert_data('base_stock', base_stock_df.to_dict(orient='records'))
         
-        # Also sync to all_products table
-        all_products_data = []
-        for _, row in base_stock_df.iterrows():
-            all_products_data.append({
-                'product_sku': row['product_sku'],
-                'product_name': row['product_name'],
-                'category': row['category'],
-                'quantity': row['stock_level']
-            })
-            
-        # Upsert to all_products (don't delete existing data)
-        if all_products_data:
-            insert_data('all_products', all_products_data)
-        
-        print("[Backend] ✅ Upload completed successfully and synced with all_products")
+        print("[Backend] ✅ Upload completed successfully")
         return {
             "success": True,
             "message": "Stock files processed successfully",
