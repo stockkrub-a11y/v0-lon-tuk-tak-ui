@@ -1,0 +1,99 @@
+"use client"
+
+import type React from "react"
+import { useState, useEffect } from "react"
+// ... (imports remain the same, keeping all the existing imports)
+
+export default function NotificationsPage() {
+  // ... (all the state declarations remain the same)
+
+  const handleSaveManualValues = async () => {
+    if (!selectedNotification) return
+
+    setIsSaving(true)
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+      try {
+        const res = await fetch(`${apiUrl}/notifications/update_manual_values?product_sku=${encodeURIComponent(
+          selectedNotification.sku,
+        )}&minstock=${editedMinStock}&buffer=${editedBuffer}`, {
+          method: 'POST',
+        })
+
+        if (res.ok) {
+          const json = await res.json()
+          if (json && json.success) {
+            // Always refresh to get latest status/description from backend
+            await fetchAndSetNotifications()
+            
+            // After refresh, get the updated notification to show in modal
+            const updatedNotification = notifications.find(n => n.sku === selectedNotification.sku)
+            if (updatedNotification) {
+              setSelectedNotification(updatedNotification)
+              setEditedMinStock(updatedNotification.minStock)
+              setEditedBuffer(updatedNotification.buffer)
+            }
+            
+            alert('Manual values updated and report regenerated (backend).')
+            setIsSaving(false)
+            return
+          }
+        }
+      } catch (e) {
+        // Backend not available or failed — fall back to Supabase-only update
+      }
+
+      // Supabase-only mode: update directly using client helper
+      const result = await updateNotificationManualValues(selectedNotification.sku, editedMinStock, editedBuffer)
+      if (result && result.success) {
+        // Always refresh to get latest status/description from backend
+        await fetchAndSetNotifications()
+        
+        // After refresh, get the updated notification to show in modal
+        const updatedNotification = notifications.find(n => n.sku === selectedNotification.sku)
+        if (updatedNotification) {
+          setSelectedNotification(updatedNotification)
+          setEditedMinStock(updatedNotification.minStock)
+          setEditedBuffer(updatedNotification.buffer)
+        }
+        
+        alert('Manual values updated successfully (Supabase-only mode).')
+      } else {
+        alert(`Failed to update manual values: ${result?.message || 'Unknown error'}`)
+      }
+    } catch (error) {
+      console.error("[v0] Failed to update manual values:", error)
+      alert(`Failed to update: ${error instanceof Error ? error.message : "Unknown error"}`)
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  // ... (rest of the component code remains the same)
+
+  return (
+    // ... (keep all the existing JSX, but update the notification click handler)
+    <div className="space-y-4">
+      {filteredAndSortedNotifications.map((notification) => (
+        <button
+          key={notification.id}
+          onClick={() => {
+            // Always use latest data from notifications array
+            const latestNotification = notifications.find(n => n.sku === notification.sku) ?? notification
+            setSelectedNotification(latestNotification)
+            setEditedMinStock(latestNotification.minStock)
+            setEditedBuffer(latestNotification.buffer)
+            setIsEditingMinStock(false)
+            setIsEditingBuffer(false)
+          }}
+          className={`w-full bg-white rounded-lg p-6 border-l-4 ${getStatusColor(
+            notification.status,
+          )} hover:shadow-md transition-shadow text-left relative`}
+        >
+          {/* ... rest of the notification button content remains the same */}
+        </button>
+      ))}
+    </div>
+    // ... (rest of the JSX remains the same)
+  )
+}

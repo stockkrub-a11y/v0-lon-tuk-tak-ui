@@ -480,11 +480,25 @@ async def upload_stock_files(
         
         base_stock_df = pd.DataFrame(base_stock_data)
         
-        # Clear and insert new data
+        # Clear and insert new data into base_stock
         delete_data('base_stock', 'product_sku', '*')
         insert_data('base_stock', base_stock_df.to_dict(orient='records'))
         
-        print("[Backend] ✅ Upload completed successfully")
+        # Also sync to all_products table
+        all_products_data = []
+        for _, row in base_stock_df.iterrows():
+            all_products_data.append({
+                'product_sku': row['product_sku'],
+                'product_name': row['product_name'],
+                'category': row['category'],
+                'quantity': row['stock_level']
+            })
+            
+        # Upsert to all_products (don't delete existing data)
+        if all_products_data:
+            insert_data('all_products', all_products_data)
+        
+        print("[Backend] ✅ Upload completed successfully and synced with all_products")
         return {
             "success": True,
             "message": "Stock files processed successfully",
@@ -544,37 +558,67 @@ async def update_manual_values_endpoint(
             raise HTTPException(status_code=404, detail=f"Product {product_sku} not found in notifications")
         
         row = df_notification.iloc[0]
-        
-        # Get values from the row
-        stock = row['Stock']
-        last_stock = row['Last_Stock']
+
+        # Robustly read numeric columns - handle different column names / trailing spaces / casing
+        def _get_col_value(series, df_cols, candidates, default=0):
+            # Build a normalized map once
+            norm_map = {str(c).strip().lower(): c for c in df_cols}
+            for cand in candidates:
+                key = norm_map.get(str(cand).strip().lower())
+                if key is not None:
+                    val = series.get(key, None)
+                    try:
+                        if pd.notna(val):
+                            return val
+                    except Exception:
+                        return val
+            return default
+
+        stock = _get_col_value(row, df_notification.columns, ['Stock', 'stock_level', 'Stock ', 'Stock\n', 'currentStock', 'stock'])
+        last_stock = _get_col_value(row, df_notification.columns, ['Last_Stock', 'last_stock', 'Last Stock', 'LastStock', 'laststock'])
+
+        try:
+            stock = int(stock)
+        except Exception:
+            stock = 0
+        try:
+            last_stock = int(last_stock)
+        except Exception:
+            last_stock = 0
+
+        # Convert numeric values carefully
+        try:
+            stock = float(row.get('Stock', 0))
+        except (ValueError, TypeError):
+            stock = 0
+            
+        try:
+            last_stock = float(row.get('Last_Stock', 0))
+        except (ValueError, TypeError):
+            last_stock = 0
+
         weekly_sale = max((last_stock - stock), 1)
         decrease_rate = ((last_stock - stock) / last_stock * 100) if last_stock > 0 else 0
         weeks_to_empty = stock / weekly_sale if weekly_sale > 0 else 0
         
-        # Apply manual values or use defaults
-        if minstock is not None:
-            new_minstock = minstock
-        else:
-            new_minstock = int(weekly_sale * 2 * 1.5)  # WEEKS_TO_COVER = 2, SAFETY_FACTOR = 1.5
+        # Apply manual values - ALWAYS use the values from the request parameters
+        stored_minstock = minstock if minstock is not None else 0
+        stored_buffer = buffer if buffer is not None else 0
         
-        if buffer is not None:
-            new_buffer = buffer
-        else:
-            if decrease_rate > 50:
-                new_buffer = 20
-            elif decrease_rate > 20:
-                new_buffer = 10
-            else:
-                new_buffer = 5
-            new_buffer = min(new_buffer, 50)  # MAX_BUFFER = 50
+        print("[Backend] Initial values:")
+        print(f"  Stock: {stock}")
+        print(f"  Last Stock: {last_stock}")
+        print(f"  Weekly Sale: {weekly_sale}")
+        print(f"  Decrease Rate: {decrease_rate}%")
+        print(f"  MinStock: {stored_minstock}")
+        print(f"  Buffer: {stored_buffer}")
         
         # Calculate new reorder quantity
         default_reorder = int(weekly_sale * 1.5)
-        new_reorder_qty = max(new_minstock + new_buffer - stock, default_reorder)
+        new_reorder_qty = max(stored_minstock + stored_buffer - stock, default_reorder)
         
         # Determine status
-        is_red = (stock < new_minstock) or (decrease_rate > 50)
+        is_red = (stock < stored_minstock) or (decrease_rate > 50)
         is_yellow = (not is_red) and (decrease_rate > 20)
         
         if is_red:
@@ -587,23 +631,156 @@ async def update_manual_values_endpoint(
             new_status = 'Green'
             new_description = 'Stock is sufficient'
         
-        update_data('stock_notifications', {
-            "MinStock": new_minstock,
-            "Buffer": new_buffer,
-            "Reorder_Qty": new_reorder_qty,
-            "Status": new_status,
-            "Description": new_description
-        }, "Product_SKU", product_sku)
+        # Determine actual column names in the notification table (handle lowercase columns)
+        cols = [str(c) for c in df_notification.columns]
+        norm_map = {c.strip().lower(): c for c in cols}
+
+        match_col = norm_map.get('product_sku', 'product_sku')
+
+        # Helper to find the real column name from several name candidates
+        def find_col(*candidates):
+            for cand in candidates:
+                key = str(cand).strip().lower()
+                if key in norm_map:
+                    return norm_map[key]
+            return None
+
+        # First: write minstock/buffer to the DB (if the columns exist). This ensures
+        # the stored values are the source of truth for subsequent recalculation.
+        first_payload = {}
+        min_col = find_col('minstock', 'min_stock', 'min stock', 'MinStock')
+        buf_col = find_col('buffer', 'Buffer')
+        if min_col:
+            first_payload[min_col] = int(stored_minstock)
+        if buf_col:
+            first_payload[buf_col] = int(stored_buffer)
+        if 'updated_at' in norm_map:
+            first_payload[norm_map['updated_at']] = datetime.now()
+
+        if first_payload:
+            # Sanitize payload (convert datetimes / timestamps to ISO strings)
+            def _sanitize_payload(payload):
+                sanitized = {}
+                for k, v in payload.items():
+                    try:
+                        if isinstance(v, (pd.Timestamp, datetime)):
+                            sanitized[k] = v.isoformat()
+                        else:
+                            sanitized[k] = v
+                    except Exception:
+                        sanitized[k] = v
+                return sanitized
+
+            sanitized_first = _sanitize_payload(first_payload)
+            print(f"[Backend] Writing manual min/buffer for {product_sku}: {sanitized_first}")
+            first_result = update_data('stock_notifications', sanitized_first, match_col, product_sku)
+            print(f"[Backend] First update result: {first_result}")
+        else:
+            print(f"[Backend] No min/buffer columns present to update for {product_sku}")
+
+        # Use the values from our initial calculation
+        stock_val = stock
+        last_stock_val = last_stock
         
-        print(f"[Backend] ✅ Updated manual values for {product_sku}")
+        print("[Backend] Values for status calculation:")
+        print(f"  Current stock: {stock_val}")
+        print(f"  Last stock: {last_stock_val}")
+        print(f"  MinStock: {stored_minstock}")
+        print(f"  Buffer: {stored_buffer}")
+        print(f"  Decrease Rate: {decrease_rate}%")
+
+        try:
+            stock_val = int(stock_val)
+        except Exception:
+            stock_val = 0
+        try:
+            last_stock_val = int(last_stock_val)
+        except Exception:
+            last_stock_val = 0
+
+        # Use the values from the request parameters since we've already written them
+        stored_minstock = minstock if minstock is not None else 0
+        stored_buffer = buffer if buffer is not None else 0
+
+        # Recalculate metrics based on current values from request
+        weekly_sale = max((last_stock_val - stock_val), 1)
+        decrease_rate = ((last_stock_val - stock_val) / last_stock_val * 100) if last_stock_val > 0 else 0
+        weeks_to_empty = stock_val / weekly_sale if weekly_sale > 0 else 0
+
+        # Use request values for minstock/buffer and compute reorder
+        default_reorder = int(weekly_sale * 1.5)
+        recomputed_reorder = max(stored_minstock + stored_buffer - stock_val, default_reorder)
+
+        # Completely revised status calculation
+        if decrease_rate > 50:
+            recomputed_status = 'Red'
+            recomputed_description = f'Decreasing rapidly! Recommend restocking {recomputed_reorder} units'
+        elif stored_minstock > 0 and stock_val < stored_minstock:
+            recomputed_status = 'Red'
+            recomputed_description = f'Below minimum stock level! Recommend restocking {recomputed_reorder} units'
+        elif decrease_rate > 20:
+            recomputed_status = 'Yellow'
+            recomputed_description = f'Moderate decrease rate, prepare to restock. Recommend restocking {recomputed_reorder} units'
+        elif stored_minstock > 0 and stock_val < (stored_minstock + stored_buffer):
+            recomputed_status = 'Yellow'
+            recomputed_description = f'Getting close to minimum stock. Consider restocking {recomputed_reorder} units'
+        else:
+            recomputed_status = 'Green'
+            recomputed_description = 'Stock is sufficient'
+            
+        print(f"[Backend] Status calculation for {product_sku}:")
+        print(f"  - Stock: {stock_val}")
+        print(f"  - MinStock: {stored_minstock}")
+        print(f"  - Buffer: {stored_buffer}")
+        print(f"  - Decrease Rate: {decrease_rate}%")
+        print(f"  - Resulting Status: {recomputed_status}")
+        print(f"  - Description: {recomputed_description}")
+
+        # Build second payload with recalculated values
+        second_payload = {}
+        
+        # Always include these core fields
+        second_payload['reorder_qty'] = int(new_reorder_qty)
+        second_payload['status'] = recomputed_status
+        second_payload['description'] = recomputed_description
+        second_payload['updated_at'] = datetime.now().isoformat()
+
+        # Log the final values we're about to save
+        print(f"[Backend] Final calculated values:")
+        print(f"  Reorder Qty: {new_reorder_qty}")
+        print(f"  Status: {recomputed_status}")
+        print(f"  Description: {recomputed_description}")
+
+        try:
+            # Update the notification record
+            sanitized_second = second_payload.copy()
+            print(f"[Backend] Writing final values for {product_sku}: {sanitized_second}")
+            second_result = update_data('stock_notifications', sanitized_second, match_col, product_sku)
+            print(f"[Backend] Second update result: {second_result}")
+            
+            # Get the final updated record
+            final_df = execute_query(f"SELECT * FROM stock_notifications WHERE {match_col} = '{product_sku}'")
+            final_row = None
+            if final_df is not None and not final_df.empty:
+                final_row = final_df.iloc[0].to_dict()
+                # Convert timestamps to strings
+                for k, v in list(final_row.items()):
+                    if pd.notna(v) and isinstance(v, (pd.Timestamp, datetime)):
+                        final_row[k] = str(v)
+        except Exception as e:
+            print(f"[Backend] Warning: failed during final update/fetch: {e}")
+            final_row = None
+
+        print(f"[Backend] ✅ Updated manual values and recalculated status for {product_sku}")
         return {
             "success": True,
-            "message": "Manual values updated successfully",
+            "message": "Manual values updated and recalculated successfully",
             "product_sku": product_sku,
-            "minstock": new_minstock,
-            "buffer": new_buffer,
-            "reorder_qty": new_reorder_qty,
-            "status": new_status
+            "minstock": stored_minstock,
+            "buffer": stored_buffer,
+            "reorder_qty": recomputed_reorder,
+            "status": recomputed_status,
+            "updated_row": final_row
         }
         
     except HTTPException:

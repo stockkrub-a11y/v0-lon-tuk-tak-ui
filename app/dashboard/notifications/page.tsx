@@ -27,7 +27,7 @@ import {
   ArrowUpDown,
 } from "lucide-react"
 
-import { getNotifications, checkBaseStock, uploadStockFiles } from "@/lib/api"
+import { getNotifications, checkBaseStock, uploadStockFiles, updateNotificationManualValues } from "@/lib/api"
 
 type NotificationStatus = "critical" | "warning" | "safe"
 type SortOption = "name-asc" | "name-desc" | "quantity-asc" | "quantity-desc" | "none" // Added SortOption type
@@ -77,7 +77,8 @@ export default function NotificationsPage() {
       try {
         const data = await checkBaseStock()
         console.log("[v0] base_stock check:", data)
-        setBaseStockExists(data.exists && data.row_count > 0)
+        // row_count may be undefined; guard with nullish coalescing
+        setBaseStockExists(Boolean(data?.exists && (data?.row_count ?? 0) > 0))
       } catch (error) {
         console.error("[v0] Failed to check base_stock:", error)
         setBaseStockExists(false)
@@ -89,30 +90,23 @@ export default function NotificationsPage() {
     checkStock()
   }, [])
 
-  useEffect(() => {
-    async function fetchNotifications() {
-      try {
-        console.log("[v0] ===== FETCHING NOTIFICATIONS START =====")
-        console.log("[v0] API URL:", process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000")
+  // Extracted fetch + mapping into a reusable function so we can refresh after updates
+  const fetchAndSetNotifications = async () => {
+    setIsLoading(true)
+    try {
+      console.log("[v0] ===== FETCHING NOTIFICATIONS START =====")
+      console.log("[v0] API URL:", process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000")
 
-        const data = await getNotifications()
+      const data: any = await getNotifications()
 
-        console.log("[v0] ===== FETCHING NOTIFICATIONS COMPLETE =====")
-        console.log("[v0] Received data:", data)
-        console.log("[v0] Data type:", typeof data)
-        console.log("[v0] Is array:", Array.isArray(data))
-        console.log("[v0] Data length:", Array.isArray(data) ? data.length : "N/A")
+      console.log("[v0] ===== FETCHING NOTIFICATIONS COMPLETE =====")
+      console.log("[v0] Received data:", data)
 
-        if (Array.isArray(data) && data.length > 0) {
-          console.log("[v0] First item:", data[0])
-          console.log("[v0] First item keys:", Object.keys(data[0]))
-        }
-
-        if (!Array.isArray(data)) {
-          console.error("[v0] Data is not an array:", data)
-          setNotifications([])
-          return
-        }
+      if (!Array.isArray(data)) {
+        console.error("[v0] Data is not an array:", data)
+        setNotifications([])
+        return
+      }
 
         const mapped: Notification[] = data.map((item, index) => {
           console.log(`[v0] Mapping item ${index}:`, item)
@@ -150,7 +144,8 @@ export default function NotificationsPage() {
       }
     }
 
-    fetchNotifications()
+  useEffect(() => {
+    fetchAndSetNotifications()
   }, [])
 
   const filteredAndSortedNotifications = notifications
@@ -283,16 +278,64 @@ export default function NotificationsPage() {
 
     setIsSaving(true)
     try {
-      alert("Manual value updates require the backend server. This feature is not available in Supabase-only mode.")
-      setIsSaving(false)
-      return
+      // Try to update via backend if available
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+      try {
+        console.log("[v0] Sending update for SKU:", selectedNotification.sku, "minstock:", editedMinStock, "buffer:", editedBuffer)
+        const res = await fetch(`${apiUrl}/notifications/update_manual_values?product_sku=${encodeURIComponent(
+          selectedNotification.sku,
+        )}&minstock=${editedMinStock}&buffer=${editedBuffer}`, {
+          method: 'POST',
+        })
 
-      // Original backend code commented out:
-      // const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
-      // const params = new URLSearchParams({
-      //   product_sku: selectedNotification.sku,
-      // })
-      // ... rest of backend code
+        if (res.ok) {
+          const json = await res.json()
+          console.log("[v0] Backend update response:", json)
+          
+          if (json && json.success) {
+            // Always fetch fresh notifications
+            await fetchAndSetNotifications()
+            
+            // Wait briefly for state update
+            await new Promise(resolve => setTimeout(resolve, 100))
+            
+            // Find the updated notification in the refreshed list
+            const updatedNotification = notifications.find(n => n.sku === selectedNotification.sku)
+            console.log("[v0] Found updated notification:", updatedNotification)
+            
+            if (updatedNotification) {
+              console.log("[v0] Updating selected notification with:", updatedNotification)
+              setSelectedNotification(updatedNotification)
+              setEditedMinStock(updatedNotification.minStock)
+              setEditedBuffer(updatedNotification.buffer)
+              setIsEditingMinStock(false)
+              setIsEditingBuffer(false)
+            }
+            alert('Manual values updated and report regenerated (backend).')
+            setIsSaving(false)
+            return
+          }
+        }
+      } catch (e) {
+        // Backend not available or failed — fall back to Supabase-only update
+      }
+
+      // Supabase-only mode: update directly using client helper
+      const result = await updateNotificationManualValues(selectedNotification.sku, editedMinStock, editedBuffer)
+      if (result && result.success) {
+        // Always refresh to get latest status/description from backend
+        await fetchAndSetNotifications()
+        // Find and select updated notification from refreshed list
+        setSelectedNotification((prev) => {
+          if (!prev) return prev
+          const updated = notifications.find(n => n.sku === prev.sku)
+          return updated ?? prev
+        })
+        alert('Manual values updated successfully (Supabase-only mode).')
+      } else {
+        alert(`Failed to update manual values: ${result?.message || 'Unknown error'}`)
+      }
+      setIsSaving(false)
     } catch (error) {
       console.error("[v0] Failed to update manual values:", error)
       alert(`Failed to update: ${error instanceof Error ? error.message : "Unknown error"}`)
@@ -516,10 +559,12 @@ export default function NotificationsPage() {
                 <button
                   key={notification.id}
                   onClick={() => {
-                    // Initialize editing states when selecting notification
-                    setSelectedNotification(notification)
-                    setEditedMinStock(notification.minStock)
-                    setEditedBuffer(notification.buffer)
+                    // Find latest values from notifications array
+                    const latestNotification = notifications.find(n => n.sku === notification.sku) ?? notification
+                    // Initialize editing states with latest values
+                    setSelectedNotification(latestNotification)
+                    setEditedMinStock(latestNotification.minStock)
+                    setEditedBuffer(latestNotification.buffer)
                     setIsEditingMinStock(false)
                     setIsEditingBuffer(false)
                   }}

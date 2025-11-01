@@ -114,18 +114,28 @@ export async function getNotifications() {
 
     console.log("[v0] Successfully fetched", data?.length || 0, "notifications")
 
-    return data.map((item) => ({
-      Product: item.Product,
-      Stock: item.Stock,
-      Last_Stock: item.Last_Stock,
-      "Decrease_Rate(%)": item["Decrease_Rate(%)"],
-      Weeks_To_Empty: item.Weeks_To_Empty,
-      MinStock: item.MinStock,
-      Buffer: item.Buffer,
-      Reorder_Qty: item.Reorder_Qty,
-      Status: item.Status,
-      Description: item.Description,
-    }))
+    // Normalize and return a predictable shape for the frontend. The DB
+    // schema sometimes uses mixed-case or localized column names, so map
+    // common variants to stable keys.
+    return data.map((item: any) => {
+      console.log('[v0] Raw notification item:', item);
+      return {
+        product: item.product ?? item.Product ?? item.product_name ?? item.Product_name ?? "",
+        product_sku: item.product_sku ?? item.Product_SKU ?? item.ProductSKU ?? item.ProductSku ?? "",
+        category: item.category ?? item.Category ?? item['หมวดหมู่'] ?? "",
+        stock: Number(item.stock ?? item.Stock ?? item.stock_level ?? 0) || 0,
+        last_stock: Number(item.last_stock ?? item.Last_Stock ?? 0) || 0,
+        decrease_rate: Number(item.decrease_rate ?? item["Decrease_Rate(%)"] ?? 0) || 0,
+        weeks_to_empty: Number(item.weeks_to_empty ?? item.Weeks_To_Empty ?? 0) || 0,
+        minstock: Number(item.minstock ?? item.MinStock ?? item.minStock ?? 0) || 0,
+        buffer: Number(item.buffer ?? item.Buffer ?? 0) || 0,
+        reorder_qty: Number(item.reorder_qty ?? item.Reorder_Qty ?? 0) || 0,
+        status: item.status ?? item.Status ?? "",
+        description: item.description ?? item.Description ?? "",
+        // keep original raw item for debugging
+        _raw: item,
+      }
+    })
   } catch (error) {
     console.error("[v0] Failed to fetch notifications:", error)
     return []
@@ -214,45 +224,103 @@ export async function getDashboardAnalytics() {
 export async function getAnalysisHistoricalSales(sku: string) {
   try {
     const supabase = getSupabaseClient()
-
-    const { data, error } = await supabase
+    // First, try to find historical sales by SKU or product name in `base_data`.
+    // This handles requests like a SKU lookup which should return sales over time.
+    let { data: salesData, error: salesError } = await supabase
       .from("base_data")
       .select("*")
-      .ilike("product_sku", `%${sku}%`)
+      .or(`product_sku.ilike.%${sku}%,product_name.ilike.%${sku}%`)
       .order("sales_date", { ascending: true })
 
-    if (error) throw error
+    if (salesError) {
+      console.error("[v0] Supabase error fetching base_data:", salesError)
+      throw salesError
+    }
 
-    // Group by month and size
     const chartData: any[] = []
     const tableData: any[] = []
     const sizes = new Set<string>()
 
-    data.forEach((item) => {
-      const month = `${item.sales_year}-${String(item.sales_month).padStart(2, "0")}`
-      sizes.add(item.product_sku)
+    if (Array.isArray(salesData) && salesData.length > 0) {
+      // Treat as SKU (historical sales) search
+      salesData.forEach((item) => {
+        const monthNum = Number(item.sales_month) || 0
+        sizes.add(item.product_sku)
 
-      chartData.push({
-        month,
-        size: item.product_sku,
-        quantity: item.total_quantity,
+        chartData.push({
+          month: monthNum,
+          size: item.product_sku,
+          quantity: item.total_quantity,
+        })
+
+        tableData.push({
+          product_sku: item.product_sku,
+          product_name: item.product_name,
+          total_quantity: item.total_quantity,
+          date: item.sales_date,
+          income: item.total_quantity * 100,
+        })
       })
 
-      tableData.push({
-        date: item.sales_date,
-        size: item.product_sku,
-        quantity: item.total_quantity,
-        income: item.total_quantity * 100, // Assuming 100 baht per unit
-      })
-    })
+      console.log(`[v0] getAnalysisHistoricalSales: SKU search for "${sku}" -> rows=${salesData.length}`)
 
-    return {
-      success: true,
-      message: "Data fetched successfully",
-      chart_data: chartData,
-      table_data: tableData,
-      sizes: Array.from(sizes),
+      return {
+        success: true,
+        message: "Data fetched successfully",
+        chart_data: chartData,
+        table_data: tableData,
+        sizes: Array.from(sizes),
+        search_type: "sku",
+      }
     }
+
+    // If no sales records, try treating the query as a category/product search
+    // and return the current stock snapshot from `base_stock`.
+    let { data: stockData, error: stockError } = await supabase
+      .from("base_stock")
+      .select("product_sku, product_name, stock_level, flag, category")
+      .or(`product_name.ilike.%${sku}%,category.ilike.%${sku}%,product_sku.ilike.%${sku}%`)
+      .order("product_name", { ascending: true })
+
+    if (stockError) {
+      console.error("[v0] Supabase error fetching base_stock:", stockError)
+      throw stockError
+    }
+
+    if (Array.isArray(stockData) && stockData.length > 0) {
+      stockData.forEach((item: any, index: number) => {
+        chartData.push({
+          product_sku: item.product_sku,
+          product_name: item.product_name,
+          stock_level: Number(item.stock_level) || 0,
+          flag: item.flag,
+          category: item.category || "",
+          index,
+        })
+
+        tableData.push({
+          product_sku: item.product_sku,
+          product_name: item.product_name,
+          stock_level: Number(item.stock_level) || 0,
+          flag: item.flag,
+          category: item.category || "",
+        })
+      })
+
+      console.log(`[v0] getAnalysisHistoricalSales: Category/product search for "${sku}" -> rows=${stockData.length}`)
+
+      return {
+        success: true,
+        message: "Data fetched successfully",
+        chart_data: chartData,
+        table_data: tableData,
+        sizes: [],
+        search_type: "category",
+      }
+    }
+
+    // No data found in either table
+    return { success: true, message: "No data found", chart_data: [], table_data: [], sizes: [], search_type: "sku" }
   } catch (error) {
     console.error("[v0] Failed to fetch historical sales:", error)
     return { success: false, message: "Failed to fetch data", chart_data: [], table_data: [], sizes: [] }
@@ -360,23 +428,47 @@ export async function getAnalysisTotalIncome(product_sku = "", category = "") {
 export async function getAnalysisBaseSKUs(search = "") {
   try {
     const supabase = getSupabaseClient()
+    // Fetch SKUs from both base_stock (current snapshot) and base_data (historical sales)
+    const skus = new Set<string>()
 
-    let query = supabase.from("base_stock").select("product_sku")
+    try {
+      const { data: stockData, error: stockError } = await supabase
+        .from("base_stock")
+        .select("product_sku")
 
-    if (search) {
-      query = query.ilike("product_sku", `%${search}%`)
+      if (stockError) {
+        console.warn("[v0] Warning fetching SKUs from base_stock:", stockError)
+      } else if (Array.isArray(stockData)) {
+        stockData.forEach((r: any) => {
+          if (r && r.product_sku) skus.add(String(r.product_sku).trim())
+        })
+      }
+    } catch (e) {
+      console.warn("[v0] Exception fetching base_stock SKUs:", e)
     }
 
-    const { data, error } = await query
+    try {
+      let dataQuery = supabase.from("base_data").select("product_sku")
+      if (search) dataQuery = dataQuery.ilike("product_sku", `%${search}%`)
+      const { data: baseData, error: baseError } = await dataQuery
+      if (baseError) {
+        console.warn("[v0] Warning fetching SKUs from base_data:", baseError)
+      } else if (Array.isArray(baseData)) {
+        baseData.forEach((r: any) => {
+          if (r && r.product_sku) skus.add(String(r.product_sku).trim())
+        })
+      }
+    } catch (e) {
+      console.warn("[v0] Exception fetching base_data SKUs:", e)
+    }
 
-    if (error) throw error
-
-    const uniqueSKUs = [...new Set(data.map((item) => item.product_sku))]
+    // If a search term was provided, filter the results client-side as well
+    const results = Array.from(skus).filter((s) => (search ? s.toLowerCase().includes(search.toLowerCase()) : true))
 
     return {
       success: true,
-      base_skus: uniqueSKUs,
-      total: uniqueSKUs.length,
+      base_skus: results,
+      total: results.length,
     }
   } catch (error) {
     console.error("[v0] Failed to fetch base SKUs:", error)
@@ -397,8 +489,33 @@ export async function getAnalysisPerformanceProducts(search = "") {
     const { data, error } = await query
 
     if (error) throw error
+    // If all_products exists but contains no rows, fallback to base_stock
+    if (!Array.isArray(data) || data.length === 0) {
+      console.warn("[v0] all_products returned no rows, falling back to base_stock")
+      // reuse the fallback path below
+      const { data: baseData, error: baseError } = await supabase
+        .from("base_stock")
+        .select("product_sku, product_name, category")
 
-    // Group by category
+      if (baseError) throw baseError
+
+      const categories: Record<string, Array<{ product_sku: string; product_name: string }>> = {}
+      const products = (baseData || []).map((item: any) => ({
+        product_sku: item.product_sku,
+        product_name: item.product_name,
+        category: item.category || "Uncategorized",
+      }))
+
+      products.forEach((p) => {
+        const cat = p.category || "Uncategorized"
+        categories[cat] = categories[cat] || []
+        categories[cat].push({ product_sku: p.product_sku, product_name: p.product_name })
+      })
+
+      return { success: true, categories, all_products: products }
+    }
+
+    // Group by category for all_products
     const categories: Record<string, Array<{ product_sku: string; product_name: string }>> = {}
 
     data.forEach((item) => {
@@ -422,8 +539,34 @@ export async function getAnalysisPerformanceProducts(search = "") {
       })),
     }
   } catch (error) {
-    console.error("[v0] Failed to fetch performance products:", error)
-    return { success: false, categories: {}, all_products: [] }
+    console.error("[v0] Failed to fetch performance products from all_products, trying base_stock fallback:", error)
+    // Fallback: try reading from base_stock if all_products view/table doesn't exist
+    try {
+      const supabase = getSupabaseClient()
+      const { data: baseData, error: baseError } = await supabase
+        .from("base_stock")
+        .select("product_sku, product_name, category")
+
+      if (baseError) throw baseError
+
+      const categories: Record<string, Array<{ product_sku: string; product_name: string }>> = {}
+      const products = (baseData || []).map((item: any) => ({
+        product_sku: item.product_sku,
+        product_name: item.product_name,
+        category: item.category || "Uncategorized",
+      }))
+
+      products.forEach((p) => {
+        const cat = p.category || "Uncategorized"
+        categories[cat] = categories[cat] || []
+        categories[cat].push({ product_sku: p.product_sku, product_name: p.product_name })
+      })
+
+      return { success: true, categories, all_products: products }
+    } catch (fallbackError) {
+      console.error("[v0] Fallback to base_stock failed:", fallbackError)
+      return { success: false, categories: {}, all_products: [] }
+    }
   }
 }
 
@@ -488,7 +631,25 @@ export async function getSearchSuggestions(search: string) {
 
     if (error) throw error
 
-    const suggestions = data.map((item) => ({
+    // If no results from all_products, try base_stock as a fallback
+    let sourceData = data
+    if ((!Array.isArray(data) || data.length === 0) && search) {
+      try {
+        const { data: baseData, error: baseErr } = await supabase
+          .from("base_stock")
+          .select("product_sku, product_name, category")
+          .or(`product_name.ilike.%${search}%,product_sku.ilike.%${search}%,category.ilike.%${search}%`)
+          .limit(10)
+
+        if (!baseErr && Array.isArray(baseData) && baseData.length > 0) {
+          sourceData = baseData
+        }
+      } catch (e) {
+        // ignore and continue with empty suggestions
+      }
+    }
+
+    const suggestions = (sourceData || []).map((item) => ({
       value: item.product_sku,
       type: "product",
       label: `${item.product_name} (${item.product_sku})`,
@@ -597,11 +758,26 @@ export async function trainModel(salesFile: File, productFile?: File) {
       if (productFile) {
         const productData = await parseExcelFile(productFile)
         if (productData.length > 0) {
+          // Insert into base_stock table
           const { error: productError } = await supabase
             .from("base_stock")
             .upsert(productData, { onConflict: "product_sku" })
-
+          
           if (productError) throw productError
+          
+          // Also insert into all_products table
+          const allProductsData = productData.map(item => ({
+            product_sku: item.product_sku,
+            product_name: item.product_name,
+            category: item.category,
+            quantity: item.stock_level
+          }))
+          
+          const { error: allProductsError } = await supabase
+            .from("all_products")
+            .upsert(allProductsData, { onConflict: "product_sku" })
+          
+          if (allProductsError) throw allProductsError
         }
       }
 
@@ -716,5 +892,95 @@ export async function checkBackendHealth() {
       error: error instanceof Error ? error.message : "Unknown error",
       url: API_BASE_URL,
     }
+  }
+}
+
+/**
+ * Update manual MinStock/Buffer values directly in Supabase for stock_notifications.
+ * This is used when the Python backend is not available (Supabase-only mode).
+ */
+export async function updateNotificationManualValues(product_sku: string, minstock?: number | null, buffer?: number | null) {
+  try {
+    const supabase = getSupabaseClient()
+
+    // Fetch current notification row
+    const { data: rows, error: fetchErr } = await supabase
+      .from('stock_notifications')
+      .select('*')
+      .eq('product_sku', product_sku)
+      .limit(1)
+
+    if (fetchErr) throw fetchErr
+    const row = Array.isArray(rows) && rows.length > 0 ? rows[0] : null
+    if (!row) {
+      return { success: false, message: 'Product not found in stock_notifications' }
+    }
+
+    // Normalize numeric fields
+    const stock = Number(row.Stock ?? row.stock_level ?? row.currentStock ?? 0) || 0
+    const last_stock = Number(row.Last_Stock ?? row.last_stock ?? 0) || 0
+
+    const weekly_sale = Math.max((last_stock - stock), 1)
+    const decrease_rate = last_stock > 0 ? ((last_stock - stock) / last_stock * 100) : 0
+
+    // Determine new minstock and buffer using same rules as backend
+    const new_minstock = typeof minstock === 'number' ? minstock : Math.floor(weekly_sale * 2 * 1.5)
+
+    let new_buffer: number
+    if (typeof buffer === 'number') {
+      new_buffer = buffer
+    } else {
+      if (decrease_rate > 50) new_buffer = 20
+      else if (decrease_rate > 20) new_buffer = 10
+      else new_buffer = 5
+      new_buffer = Math.min(new_buffer, 50)
+    }
+
+    const default_reorder = Math.max(Math.floor(weekly_sale * 1.5), 1)
+    const new_reorder_qty = Math.max(new_minstock + new_buffer - stock, default_reorder)
+
+    // Determine status and description
+    const is_red = (stock < new_minstock) || (decrease_rate > 50)
+    const is_yellow = (!is_red) && (decrease_rate > 20)
+
+    let new_status = 'Green'
+    let new_description = 'Stock is sufficient'
+    if (is_red) {
+      new_status = 'Red'
+      new_description = `Decreasing rapidly and nearly out of stock! Recommend restocking ${new_reorder_qty} units`
+    } else if (is_yellow) {
+      new_status = 'Yellow'
+      new_description = `Decreasing rapidly, should prepare to restock. Recommend restocking ${new_reorder_qty} units`
+    }
+
+    // Prepare update payload (normalize column names to lowercase where possible)
+    const payload: any = {
+      MinStock: new_minstock,
+      Buffer: new_buffer,
+      Reorder_Qty: new_reorder_qty,
+      Status: new_status,
+      Description: new_description,
+      updated_at: new Date().toISOString(),
+    }
+
+    const { error: updateErr } = await supabase
+      .from('stock_notifications')
+      .update(payload)
+      .eq('product_sku', product_sku)
+
+    if (updateErr) throw updateErr
+
+    return {
+      success: true,
+      product_sku,
+      minstock: new_minstock,
+      buffer: new_buffer,
+      reorder_qty: new_reorder_qty,
+      status: new_status,
+      description: new_description,
+    }
+  } catch (error) {
+    console.error('[v0] Failed to update manual notification values:', error)
+    return { success: false, message: error instanceof Error ? error.message : String(error) }
   }
 }
