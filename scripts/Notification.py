@@ -29,64 +29,65 @@ def generate_stock_report(df_prev, df_curr):
     category_lookup = df_curr.drop_duplicates(subset='product_sku', keep='last').set_index('product_sku')['category']
 
     curr = df_curr.drop_duplicates(subset='product_sku', keep='last').copy()
-    
-    curr.rename(columns={
-        'product_sku': 'Product_SKU', 
-        'product_name': 'Product',
-        'stock_level': 'Stock',
-        'category': 'Category'
-    }, inplace=True)
 
-    # Last_Stock = previous snapshot if available, else fall back to current stock
-    curr['Last_Stock'] = curr['Product_SKU'].map(prev_lookup).fillna(curr['Stock'])
+    # Ensure all column names are lowercase
+    curr.columns = curr.columns.str.lower()
+    
+    # No need to rename since we're using lowercase everywhere now
+    # Map last_stock from previous data
+    curr['last_stock'] = curr['product_sku'].map(prev_lookup).fillna(curr['stock_level'])
 
     # Weekly sales and decrease rate
-    curr['Weekly_Sale'] = (curr['Last_Stock'] - curr['Stock']).clip(lower=1)
-    curr['Decrease_Rate(%)'] = np.where(
-        curr['Last_Stock'] > 0,
-        (curr['Last_Stock'] - curr['Stock']) / curr['Last_Stock'] * 100,
+    curr['weekly_sale'] = (curr['last_stock'] - curr['stock_level']).clip(lower=1)
+    curr['decrease_rate'] = np.where(
+        curr['last_stock'] > 0,
+        (curr['last_stock'] - curr['stock_level']) / curr['last_stock'] * 100,
         0
     ).round(1)
 
     # Weeks to empty
-    curr['Weeks_To_Empty'] = (curr['Stock'] / curr['Weekly_Sale']).round(2)
+    curr['weeks_to_empty'] = (curr['stock_level'] / curr['weekly_sale']).round(2)
 
-    # MinStock: manual override, else formula
-    default_min = (curr['Weekly_Sale'] * WEEKS_TO_COVER * SAFETY_FACTOR).astype(int)
-    manual_min = curr['Product_SKU'].map(manual_minstock)
-    curr['MinStock'] = np.where(manual_min.notna(), manual_min, default_min).astype(int)
+    # min_stock: manual override, else formula
+    default_min = (curr['weekly_sale'] * WEEKS_TO_COVER * SAFETY_FACTOR).astype(int)
+    manual_min = curr['product_sku'].map(manual_minstock)
+    curr['min_stock'] = np.where(manual_min.notna(), manual_min, default_min).astype(int)
 
-    # Buffer: dynamic by decrease rate, capped; manual override if present
+    # Calculate buffer (but don't store in DB)
     dyn_buf = np.select(
-        [curr['Decrease_Rate(%)'] > 50, curr['Decrease_Rate(%)'] > 20],
+        [curr['decrease_rate'] > 50, curr['decrease_rate'] > 20],
         [20, 10],
         default=5
     )
     dyn_buf = np.minimum(dyn_buf, MAX_BUFFER)
-    manual_buf = curr['Product_SKU'].map(manual_buffer)
-    curr['Buffer'] = np.where(manual_buf.notna(), manual_buf, dyn_buf).astype(int)
+    manual_buf = curr['product_sku'].map(manual_buffer)
+    buffer_values = np.where(manual_buf.notna(), manual_buf, dyn_buf).astype(int)
 
     # Reorder quantity (at least SAFETY_FACTOR * weekly sale)
-    default_reorder = (curr['Weekly_Sale'] * SAFETY_FACTOR).astype(int)
-    curr['Reorder_Qty'] = np.maximum(curr['MinStock'] + curr['Buffer'] - curr['Stock'], default_reorder).astype(int)
+    default_reorder = (curr['weekly_sale'] * SAFETY_FACTOR).astype(int)
+    curr['reorder_qty'] = np.maximum(curr['min_stock'] + buffer_values - curr['stock_level'], default_reorder).astype(int)
 
-    # Status + Description
-    is_red = (curr['Stock'] < curr['MinStock']) | (curr['Decrease_Rate(%)'] > 50)
-    is_yellow = (~is_red) & (curr['Decrease_Rate(%)'] > 20)
+    # status + description
+    is_red = (curr['stock_level'] < curr['min_stock']) | (curr['decrease_rate'] > 50)
+    is_yellow = (~is_red) & (curr['decrease_rate'] > 20)
 
-    curr['Status'] = np.where(is_red, 'Red', np.where(is_yellow, 'Yellow', 'Green'))
-    curr['Description'] = np.where(
+    curr['status'] = np.where(is_red, 'Red', np.where(is_yellow, 'Yellow', 'Green'))
+    curr['description'] = np.where(
         is_red,
-        'Decreasing rapidly and nearly out of stock! Recommend restocking ' + curr['Reorder_Qty'].astype(str) + ' units',
+        'Decreasing rapidly and nearly out of stock! Recommend restocking ' + curr['reorder_qty'].astype(str) + ' units',
         np.where(
             is_yellow,
-            'Decreasing rapidly, should prepare to restock. Recommend restocking ' + curr['Reorder_Qty'].astype(str) + ' units',
+            'Decreasing rapidly, should prepare to restock. Recommend restocking ' + curr['reorder_qty'].astype(str) + ' units',
             'Stock is sufficient'
         )
     )
 
-    return curr[['Product', 'Product_SKU', 'Category', 'Stock', 'Last_Stock', 'Decrease_Rate(%)', 'Weeks_To_Empty',
-                 'MinStock', 'Buffer', 'Reorder_Qty', 'Status', 'Description']].reset_index(drop=True)
+    # Return only the columns that match our DB schema
+    return curr[[
+        'product_name', 'product_sku', 'category', 'stock_level', 'last_stock',
+        'decrease_rate', 'weeks_to_empty', 'min_stock', 'reorder_qty',
+        'status', 'description'
+    ]].reset_index(drop=True)
 
 def update_manual_values(product_sku: str, minstock: int = None, buffer: int = None):
     """Update manual MinStock and Buffer values for a product"""

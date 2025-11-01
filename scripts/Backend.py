@@ -192,27 +192,67 @@ def load_file_with_fallback(file_content, possible_headers=[0,1,2,3]):
     Try to load Excel/CSV file with multiple header row attempts.
     Returns (DataFrame, header_row_used)
     """
-    sku_candidates = [
-        "รหัสสินค้า", 
-        "เลขอ้างอิง SKU (SKU Reference No.)", 
-        "Product_SKU",
-        "SKU",
-        "รหัส",
-        "Code"
-    ]
+    column_mapping = {
+        # SKU columns
+        "รหัสสินค้า": "Product_SKU",
+        "เลขอ้างอิง SKU (SKU Reference No.)": "Product_SKU",
+        "Product_SKU": "Product_SKU",
+        "SKU": "Product_SKU",
+        "รหัส": "Product_SKU",
+        "Code": "Product_SKU",
+        
+        # Product name columns
+        "ชื่อสินค้า": "product_name",
+        "สินค้า": "product_name",
+        "Product Name": "product_name",
+        "Name": "product_name",
+        
+        # Stock level columns
+        "จำนวนคงเหลือ": "stock_level",
+        "จำนวน": "stock_level",
+        "Stock": "stock_level",
+        "Quantity": "stock_level",
+        
+        # Category columns
+        "หมวดหมู่": "category",
+        "Category": "category",
+        "ประเภท": "category"
+    }
     
     errors = []
+    
+    def clean_and_map_columns(df):
+        # Drop the index column if it exists
+        if '#' in df.columns:
+            df = df.drop('#', axis=1)
+        if 'Unnamed: 0' in df.columns:
+            df = df.drop('Unnamed: 0', axis=1)
+            
+        # Clean column names
+        df.columns = df.columns.str.strip()
+        
+        # Map columns using our mapping dictionary
+        for old_col, new_col in column_mapping.items():
+            if old_col in df.columns:
+                df = df.rename(columns={old_col: new_col})
+                
+        # Convert stock_level to numeric
+        if 'stock_level' in df.columns:
+            df['stock_level'] = pd.to_numeric(df['stock_level'], errors='coerce').fillna(0).astype(int)
+            
+        return df
     
     # Try Excel format first
     for h in possible_headers:
         try:
             df = pd.read_excel(file_content, header=h)
-            df.columns = df.columns.str.strip()
-            for candidate in sku_candidates:
-                if candidate in df.columns:
-                    df = df.rename(columns={candidate: "Product_SKU"}).copy()
-                    print(f"✓ Found Excel with header row {h}, SKU column: {candidate}")
-                    return df, h
+            df = clean_and_map_columns(df)
+            
+            # Verify required columns exist
+            if 'Product_SKU' in df.columns:
+                print(f"✓ Found Excel with header row {h}")
+                return df, h
+                
             errors.append(f"Excel header={h}: No SKU column found")
         except Exception as e:
             errors.append(f"Excel header={h}: {str(e)}")
@@ -222,19 +262,18 @@ def load_file_with_fallback(file_content, possible_headers=[0,1,2,3]):
     for encoding in encodings:
         for h in possible_headers:
             try:
-                # Convert bytes to string with encoding
                 if isinstance(file_content, bytes):
                     content = file_content.decode(encoding)
                 else:
                     content = file_content
                 
                 df = pd.read_csv(io.StringIO(content), header=h)
-                df.columns = df.columns.str.strip()
-                for candidate in sku_candidates:
-                    if candidate in df.columns:
-                        df = df.rename(columns={candidate: "Product_SKU"}).copy()
-                        print(f"✓ Found CSV with encoding {encoding}, header row {h}, SKU column: {candidate}")
-                        return df, h
+                df = clean_and_map_columns(df)
+                
+                if 'Product_SKU' in df.columns:
+                    print(f"✓ Found CSV with encoding {encoding}, header row {h}")
+                    return df, h
+                    
                 errors.append(f"CSV {encoding} header={h}: No SKU column found")
             except Exception as e:
                 errors.append(f"CSV {encoding} header={h}: {str(e)}")
@@ -256,6 +295,21 @@ async def upload_stock_files(
         try:
             df_curr, header_row = load_file_with_fallback(io.BytesIO(current_content))
             print(f"[Backend] Current stock loaded (header={header_row}): {len(df_curr)} rows")
+            
+            # Validate required columns exist
+            required_columns = ['Product_SKU', 'product_name', 'stock_level', 'category']
+            missing_columns = [col for col in required_columns if col not in df_curr.columns]
+            if missing_columns:
+                raise ValueError(f"Missing required columns in current stock file: {', '.join(missing_columns)}")
+                
+            # Remove any unnecessary columns
+            keep_columns = ['Product_SKU', 'product_name', 'stock_level', 'category', 'created_at', 'updated_at', 'week_date', 'uploaded_at', 'flag', 'unchanged_counter']
+            all_columns = df_curr.columns.tolist()
+            drop_columns = [col for col in all_columns if col not in keep_columns and col != '#']
+            if drop_columns:
+                print(f"[Backend] Removing unnecessary columns: {', '.join(drop_columns)}")
+                df_curr = df_curr.drop(drop_columns, axis=1, errors='ignore')
+                
         except Exception as e:
             print(f"[Backend] Failed to load current stock file: {str(e)}")
             raise HTTPException(status_code=400, detail=str(e))
@@ -287,6 +341,7 @@ async def upload_stock_files(
                 print(f"[Backend] Failed to load previous stock file: {str(e)}")
                 raise HTTPException(status_code=400, detail=str(e))
         
+        # Rename columns in current stock data
         df_curr = df_curr.rename(columns={
             'ชื่อสินค้า': 'product_name',
             'รหัสสินค้า': 'product_sku',
@@ -294,26 +349,55 @@ async def upload_stock_files(
             'จำนวน': 'stock_level',
             'หมวดหมู่': 'category'
         })
-        df_prev = df_prev.rename(columns={
-            'ชื่อสินค้า': 'product_name',
-            'รหัสสินค้า': 'product_sku',
-            'จำนวนคงเหลือ': 'stock_level',
-            'จำนวน': 'stock_level',
-            'หมวดหมู่': 'category'
-        })
+        
+        # Rename columns in previous stock data
+        if df_prev is not None:
+            df_prev = df_prev.rename(columns={
+                'ชื่อสินค้า': 'product_name',
+                'รหัสสินค้า': 'product_sku',
+                'จำนวนคงเหลือ': 'stock_level',
+                'จำนวน': 'stock_level',
+                'หมวดหมู่': 'category'
+            })
         df_curr["stock_level"] = pd.to_numeric(df_curr["stock_level"], errors='coerce').fillna(0).astype(int)
         df_prev["stock_level"] = pd.to_numeric(df_prev["stock_level"], errors='coerce').fillna(0).astype(int)
         
         try:
             # Save current stock data to Supabase
             print("[Backend] Saving current stock data to Supabase...")
-            df_curr_dict = df_curr.to_dict(orient='records')
+            
+            # Ensure required columns exist and have correct names
+            required_columns = {
+                'Product_SKU': 'product_sku',
+                'product_name': 'product_name',
+                'stock_level': 'stock_level',
+                'category': 'category'
+            }
+            
+            # Validate required columns
+            missing_columns = [col for col in required_columns.keys() if col not in df_curr.columns]
+            if missing_columns:
+                raise ValueError(f"Missing required columns: {', '.join(missing_columns)}")
+                
+            # Rename columns to match database schema
+            df_curr = df_curr.rename(columns=required_columns)
+            
+            # Convert stock_level to integer
+            df_curr['stock_level'] = pd.to_numeric(df_curr['stock_level'], errors='coerce').fillna(0).astype(int)
+            
+            # Keep only the columns we need
+            keep_columns = ['product_sku', 'product_name', 'stock_level', 'category']
+            df_curr = df_curr[keep_columns]
+            
+            # Add metadata columns that exist in the schema
             now = pd.Timestamp.now()
-            for record in df_curr_dict:
-                record['created_at'] = now
-                record['updated_at'] = now
-                record['week_date'] = now.strftime('%Y-%m-%d')
-                record['uploaded_at'] = now
+            df_curr['created_at'] = now
+            df_curr['updated_at'] = now
+            df_curr['unchanged_counter'] = 0
+            df_curr['flag'] = 'stage'
+            
+            print(f"[Backend] Columns being saved: {df_curr.columns.tolist()}")
+            df_curr_dict = df_curr.to_dict(orient='records')
             # Clear and insert into base_stock (raw current stock)
             delete_data('base_stock', 'product_sku', '*')  # '*' means all
             res_base = insert_data('base_stock', df_curr_dict)
