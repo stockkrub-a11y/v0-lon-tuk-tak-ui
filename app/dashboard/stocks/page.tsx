@@ -104,6 +104,12 @@ export default function StocksPage() {
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("")
   const [isFetching, setIsFetching] = useState(false)
 
+  const cacheRef = useRef<{
+    key: string
+    data: any
+    timestamp: number
+  } | null>(null)
+
   const getFlagColor = useCallback((flag: string): string => {
     switch (flag) {
       case "active":
@@ -119,6 +125,16 @@ export default function StocksPage() {
 
   const fetchStocks = useCallback(async () => {
     if (isFetching) return
+
+    // Check cache (5 second TTL)
+    const cacheKey = `${debouncedSearchQuery}-${selectedCategory}-${selectedFlag}-${sortBy}`
+    if (cacheRef.current && cacheRef.current.key === cacheKey) {
+      const age = Date.now() - cacheRef.current.timestamp
+      if (age < 5000) {
+        console.log("[v0] Using cached stock data")
+        return
+      }
+    }
 
     setIsLoading(true)
     setIsFetching(true)
@@ -146,6 +162,13 @@ export default function StocksPage() {
         setStockItems(mapped)
         setBackendConnected(true)
         setShowOfflineBanner(false)
+
+        // Update cache
+        cacheRef.current = {
+          key: cacheKey,
+          data: mapped,
+          timestamp: Date.now(),
+        }
       }
     } catch (error) {
       console.error("[v0] Failed to fetch stock levels:", error)

@@ -29,6 +29,7 @@ import {
 } from "lucide-react"
 
 import { getNotifications, checkBaseStock, uploadStockFiles, updateNotificationManualValues } from "@/lib/api"
+import { createClient } from "@/lib/supabase/client"
 
 type NotificationStatus = "critical" | "warning" | "safe"
 type SortOption = "name-asc" | "name-desc" | "quantity-asc" | "quantity-desc" | "none" // Added SortOption type
@@ -241,6 +242,67 @@ export default function NotificationsPage() {
   }, []) // Removed fetchAndSetNotifications from dependencies to prevent infinite loop
 
   useEffect(() => {
+    const supabase = createClient()
+
+    console.log("[v0] Setting up real-time subscription for notifications")
+
+    const channel = supabase
+      .channel("notifications_real_time")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "stock_notifications",
+        },
+        (payload) => {
+          console.log("[v0] Real-time change detected:", payload.eventType, payload)
+
+          // Handle different event types for optimized updates
+          if (payload.eventType === "UPDATE" && payload.new) {
+            // Optimistically update just the changed notification
+            setNotifications((prev) => {
+              const updated = prev.map((n) => {
+                if (n.sku === payload.new.Product_SKU) {
+                  const newStatus = calculateStatus(
+                    payload.new.Stock || n.currentStock,
+                    payload.new.MinStock ?? payload.new.min_stock ?? n.minStock,
+                    payload.new.Buffer ?? payload.new.buffer ?? n.buffer,
+                  )
+                  return {
+                    ...n,
+                    minStock: payload.new.MinStock ?? payload.new.min_stock ?? n.minStock,
+                    buffer: payload.new.Buffer ?? payload.new.buffer ?? n.buffer,
+                    currentStock: payload.new.Stock || n.currentStock,
+                    status: newStatus,
+                    title: getStatusTitle(newStatus),
+                  }
+                }
+                return n
+              })
+              return updated
+            })
+          } else {
+            // For INSERT/DELETE, do a full refresh
+            fetchAndSetNotifications()
+          }
+        },
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          console.log("[v0] Successfully subscribed to real-time notifications")
+        } else if (status === "CHANNEL_ERROR") {
+          console.error("[v0] Failed to subscribe to real-time notifications")
+        }
+      })
+
+    return () => {
+      console.log("[v0] Cleaning up real-time subscription")
+      supabase.removeChannel(channel)
+    }
+  }, [fetchAndSetNotifications])
+
+  useEffect(() => {
     if (searchDebounceTimer.current) {
       clearTimeout(searchDebounceTimer.current)
     }
@@ -411,9 +473,35 @@ export default function NotificationsPage() {
       buffer: finalBuffer,
     })
 
+    // Optimistic update - update UI immediately
+    const newStatus = calculateStatus(selectedNotification.currentStock, finalMinStock, finalBuffer)
+    const newTitle = getStatusTitle(newStatus)
+
+    setNotifications((prev) =>
+      prev.map((n) =>
+        n.sku === selectedNotification.sku
+          ? { ...n, minStock: finalMinStock, buffer: finalBuffer, status: newStatus, title: newTitle }
+          : n,
+      ),
+    )
+
+    setSelectedNotification((prev) =>
+      prev
+        ? {
+            ...prev,
+            minStock: finalMinStock,
+            buffer: finalBuffer,
+            status: newStatus,
+            title: newTitle,
+          }
+        : prev,
+    )
+
+    setIsEditingMinStock(false)
+    setIsEditingBuffer(false)
     setIsSaving(true)
+
     try {
-      // Try to update via backend if available
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
       try {
         console.log(
@@ -438,34 +526,8 @@ export default function NotificationsPage() {
           console.log("[v0] Backend update response:", json)
 
           if (json && json.success) {
-            const newStatus = calculateStatus(selectedNotification.currentStock, finalMinStock, finalBuffer)
-            const newTitle = getStatusTitle(newStatus)
-
-            setNotifications((prev) =>
-              prev.map((n) =>
-                n.sku === selectedNotification.sku
-                  ? { ...n, minStock: finalMinStock, buffer: finalBuffer, status: newStatus, title: newTitle }
-                  : n,
-              ),
-            )
-
-            setSelectedNotification((prev) =>
-              prev
-                ? {
-                    ...prev,
-                    minStock: finalMinStock,
-                    buffer: finalBuffer,
-                    status: newStatus,
-                    title: newTitle,
-                  }
-                : prev,
-            )
-
-            setIsEditingMinStock(false)
-            setIsEditingBuffer(false)
             setIsSaving(false)
-
-            alert("Manual values updated and report regenerated (backend).")
+            // No need to update UI again - already done optimistically
             return
           }
         }
@@ -475,41 +537,19 @@ export default function NotificationsPage() {
 
       const result = await updateNotificationManualValues(selectedNotification.sku, finalMinStock, finalBuffer)
       if (result && result.success) {
-        const newStatus = calculateStatus(selectedNotification.currentStock, finalMinStock, finalBuffer)
-        const newTitle = getStatusTitle(newStatus)
-
-        // Update local state immediately
-        setNotifications((prev) =>
-          prev.map((n) =>
-            n.sku === selectedNotification.sku
-              ? { ...n, minStock: finalMinStock, buffer: finalBuffer, status: newStatus, title: newTitle }
-              : n,
-          ),
-        )
-
-        setSelectedNotification((prev) =>
-          prev
-            ? {
-                ...prev,
-                minStock: finalMinStock,
-                buffer: finalBuffer,
-                status: newStatus,
-                title: newTitle,
-              }
-            : prev,
-        )
-
-        setIsEditingMinStock(false)
-        setIsEditingBuffer(false)
-
-        alert("Manual values updated successfully (Supabase-only mode).")
+        // Success - optimistic update was correct
+        console.log("[v0] Supabase update successful")
       } else {
+        // Revert optimistic update on failure
         alert(`Failed to update manual values: ${result?.message || "Unknown error"}`)
+        fetchAndSetNotifications()
       }
       setIsSaving(false)
     } catch (error) {
       console.error("[v0] Failed to update manual values:", error)
       alert(`Failed to update: ${error instanceof Error ? error.message : "Unknown error"}`)
+      // Revert optimistic update on error
+      fetchAndSetNotifications()
       setIsSaving(false)
     }
   }
