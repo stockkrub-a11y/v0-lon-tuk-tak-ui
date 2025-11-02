@@ -1149,10 +1149,18 @@ async def train_model(
                     elif isinstance(value, float) and pd.isna(value):
                         record[key] = None
             print("[Backend] Data cleaned and ready for insertion")
+            
+            print("[Backend] Clearing old data from base_data...")
+            delete_data('base_data', 'product_sku', '*')
+            print("[Backend] Old data cleared, now inserting new data...")
+            
             result = insert_data('base_data', records)
             if result is None:
                 print("[Backend] ⚠️ Failed to insert data into base_data")
                 raise HTTPException(status_code=500, detail="Failed to insert data into Supabase")
+            
+            print(f"[Backend] ✅ Successfully inserted {len(records)} records into base_data")
+
             response = {
                 "success": True,
                 "data_cleaning": {
