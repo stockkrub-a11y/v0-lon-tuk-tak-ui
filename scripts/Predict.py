@@ -223,12 +223,23 @@ def Evaluate(X_train, y_train, X_test, y_test, model_file=MODEL_FILE):
     r2 = r2_score(y_test, y_pred)
     print(f"MAE: {mae}\nMAPE: {mape}\nRMSE: {rmse}\nR2: {r2}")
 
-import matplotlib.pyplot as plt
+# Optional import for plotting
+try:
+    import matplotlib.pyplot as plt
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    print("⚠️ matplotlib not available - plotting functions will be disabled")
+    MATPLOTLIB_AVAILABLE = False
+    plt = None
 
 # -----------------------------
 # Plot Validation Results
 # -----------------------------
 def plot_validation(X_test, y_test, model_file=MODEL_FILE):
+    if not MATPLOTLIB_AVAILABLE:
+        print("⚠️ matplotlib not available - cannot plot validation results")
+        return
+    
     # Load model and predict
     model = joblib.load(model_file)
     y_pred_test = model.predict(X_test)
