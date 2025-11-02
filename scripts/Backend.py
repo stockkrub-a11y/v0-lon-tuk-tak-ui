@@ -1453,9 +1453,6 @@ async def clear_forecasts():
 
 if __name__ == "__main__":
     print("=" * 80)
-    print("Starting Lon TukTak Backend Server")
-    print("=" * 80)
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
- Backend Server")
+    print("🚀 Starting Lon TukTak Backend Server")
     print("=" * 80)
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
