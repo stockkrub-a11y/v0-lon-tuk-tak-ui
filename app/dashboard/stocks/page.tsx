@@ -56,8 +56,9 @@ export default function StocksPage() {
   const [isFetching, setIsFetching] = useState(false)
 
   const fetchStocks = useCallback(async () => {
-    if (isFetching) return // Prevent multiple simultaneous fetches
+    if (isFetching) return
 
+    setIsLoading(true)
     setIsFetching(true)
     try {
       console.log("[v0] Fetching stock levels...")
@@ -92,7 +93,7 @@ export default function StocksPage() {
       setIsLoading(false)
       setIsFetching(false)
     }
-  }, [debouncedSearchQuery, selectedCategory, selectedFlag, sortBy, isFetching])
+  }, [debouncedSearchQuery, selectedCategory, selectedFlag, sortBy]) // Removed isFetching from dependencies
 
   const fetchCategories = useCallback(async () => {
     try {
