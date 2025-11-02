@@ -108,43 +108,43 @@ export default function NotificationsPage() {
         return
       }
 
-        const mapped: Notification[] = data.map((item, index) => {
-          console.log(`[v0] Mapping item ${index}:`, item)
+      const mapped: Notification[] = data.map((item, index) => {
+        console.log(`[v0] Mapping item ${index}:`, item)
 
-          const status: NotificationStatus =
-            item.Status === "Red" ? "critical" : item.Status === "Yellow" ? "warning" : "safe"
+        const status: NotificationStatus =
+          item.Status === "Red" ? "critical" : item.Status === "Yellow" ? "warning" : "safe"
 
-          return {
-            id: String(index + 1),
-            status,
-            title: item.Description && (
-              item.Description.includes("out of stock")
-                ? "Nearly Out of Stock!"
-                : item.Description.includes("Decreasing rapidly")
-                  ? "Decreasing Rapidly"
-                  : "Stock is Enough"
-            ),
-            product: item.Product,
-            sku: item.Product_SKU || item.Product,
-            category: item.Category || "Uncategorized", // Added Category mapping
-            estimatedTime: `${item.Weeks_To_Empty || 0} weeks`,
-            recommendUnits: item.Reorder_Qty || 0,
-            currentStock: item.Stock || 0,
-            decreaseRate: `${item["Decrease_Rate(%)"] || 0}%/week`,
-            timeToRunOut: `${Math.round((item.Weeks_To_Empty || 0) * 7)} days`,
-            minStock: item.MinStock ?? item.min_stock ?? item.minstock ?? 0,
-            buffer: item.Buffer ?? item.buffer ?? item.reorder_qty ?? 0,
-            recommendedRestock: item.Reorder_Qty || 0,
-          }
-        })
-        console.log("[v0] Mapped notifications:", mapped.length)
-        setNotifications(mapped)
-      } catch (error) {
-        console.error("[v0] Failed to fetch notifications:", error)
-      } finally {
-        setIsLoading(false)
-      }
+        return {
+          id: String(index + 1),
+          status,
+          title:
+            item.Description &&
+            (item.Description.includes("out of stock")
+              ? "Nearly Out of Stock!"
+              : item.Description.includes("Decreasing rapidly")
+                ? "Decreasing Rapidly"
+                : "Stock is Enough"),
+          product: item.Product,
+          sku: item.Product_SKU || item.Product,
+          category: item.Category || "Uncategorized", // Added Category mapping
+          estimatedTime: `${item.Weeks_To_Empty || 0} weeks`,
+          recommendUnits: item.Reorder_Qty || 0,
+          currentStock: item.Stock || 0,
+          decreaseRate: `${item["Decrease_Rate(%)"] || 0}%/week`,
+          timeToRunOut: `${Math.round((item.Weeks_To_Empty || 0) * 7)} days`,
+          minStock: item.MinStock ?? item.min_stock ?? item.minstock ?? 0,
+          buffer: item.Buffer ?? item.buffer ?? item.reorder_qty ?? 0,
+          recommendedRestock: item.Reorder_Qty || 0,
+        }
+      })
+      console.log("[v0] Mapped notifications:", mapped.length)
+      setNotifications(mapped)
+    } catch (error) {
+      console.error("[v0] Failed to fetch notifications:", error)
+    } finally {
+      setIsLoading(false)
     }
+  }
 
   useEffect(() => {
     fetchAndSetNotifications()
@@ -285,7 +285,7 @@ export default function NotificationsPage() {
     console.log("[v0] Saving values to backend:", {
       sku: selectedNotification.sku,
       minStock: finalMinStock,
-      buffer: finalBuffer
+      buffer: finalBuffer,
     })
 
     setIsSaving(true)
@@ -293,28 +293,38 @@ export default function NotificationsPage() {
       // Try to update via backend if available
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
       try {
-        console.log("[v0] Sending update for SKU:", selectedNotification.sku, "minstock:", finalMinStock, "buffer:", finalBuffer)
-        const res = await fetch(`${apiUrl}/notifications/update_manual_values?product_sku=${encodeURIComponent(
+        console.log(
+          "[v0] Sending update for SKU:",
           selectedNotification.sku,
-        )}&minstock=${finalMinStock}&buffer=${finalBuffer}`, {
-          method: 'POST',
-        })
+          "minstock:",
+          finalMinStock,
+          "buffer:",
+          finalBuffer,
+        )
+        const res = await fetch(
+          `${apiUrl}/notifications/update_manual_values?product_sku=${encodeURIComponent(
+            selectedNotification.sku,
+          )}&minstock=${finalMinStock}&buffer=${finalBuffer}`,
+          {
+            method: "POST",
+          },
+        )
 
         if (res.ok) {
           const json = await res.json()
           console.log("[v0] Backend update response:", json)
-          
+
           if (json && json.success) {
             // Always fetch fresh notifications
             await fetchAndSetNotifications()
-            
+
             // Wait briefly for state update
-            await new Promise(resolve => setTimeout(resolve, 100))
-            
+            await new Promise((resolve) => setTimeout(resolve, 100))
+
             // Find the updated notification in the refreshed list
-            const updatedNotification = notifications.find(n => n.sku === selectedNotification.sku)
+            const updatedNotification = notifications.find((n) => n.sku === selectedNotification.sku)
             console.log("[v0] Found updated notification:", updatedNotification)
-            
+
             if (updatedNotification) {
               console.log("[v0] Updating selected notification with:", updatedNotification)
               setSelectedNotification(updatedNotification)
@@ -323,7 +333,7 @@ export default function NotificationsPage() {
               setIsEditingMinStock(false)
               setIsEditingBuffer(false)
             }
-            alert('Manual values updated and report regenerated (backend).')
+            alert("Manual values updated and report regenerated (backend).")
             setIsSaving(false)
             return
           }
@@ -333,30 +343,30 @@ export default function NotificationsPage() {
       }
 
       // Supabase-only mode: update directly using client helper
-      const result = await updateNotificationManualValues(selectedNotification.sku, minStockValue, bufferValue)
+      const result = await updateNotificationManualValues(selectedNotification.sku, finalMinStock, finalBuffer)
       if (result && result.success) {
         // Store the current values before refresh
-        const savedMinStock = minStockValue
-        const savedBuffer = bufferValue
-        
+        const savedMinStock = finalMinStock
+        const savedBuffer = finalBuffer
+
         // Refresh notifications to get latest status/description
         await fetchAndSetNotifications()
-        
+
         // Update the selected notification with saved values
-        const updatedNotification = notifications.find(n => n.sku === selectedNotification.sku)
+        const updatedNotification = notifications.find((n) => n.sku === selectedNotification.sku)
         if (updatedNotification) {
           setSelectedNotification({
             ...updatedNotification,
             minStock: savedMinStock,
-            buffer: savedBuffer
+            buffer: savedBuffer,
           })
           setEditedMinStock(savedMinStock)
           setEditedBuffer(savedBuffer)
         }
-        
-        alert('Manual values updated successfully (Supabase-only mode).')
+
+        alert("Manual values updated successfully (Supabase-only mode).")
       } else {
-        alert(`Failed to update manual values: ${result?.message || 'Unknown error'}`)
+        alert(`Failed to update manual values: ${result?.message || "Unknown error"}`)
       }
       setIsSaving(false)
     } catch (error) {
@@ -402,10 +412,7 @@ export default function NotificationsPage() {
       console.log("[v0] - Previous file:", previousStockFile?.name || "None")
       console.log("[v0] - Current file:", currentStockFile?.name)
 
-      const result = await uploadStockFiles(
-        baseStockExists ? undefined : previousStockFile,
-        currentStockFile,
-      )
+      const result = await uploadStockFiles(baseStockExists ? undefined : previousStockFile, currentStockFile)
 
       console.log("[v0] Upload result:", result)
 
@@ -583,19 +590,19 @@ export default function NotificationsPage() {
                   key={notification.id}
                   onClick={() => {
                     // Always use the current notification from the notifications array
-                    const currentNotification = notifications.find(n => n.sku === notification.sku) ?? notification
-                    
+                    const currentNotification = notifications.find((n) => n.sku === notification.sku) ?? notification
+
                     // Keep edited values if they exist, otherwise use notification values
-                    const currentMinStock = editedMinStock ?? Number(currentNotification.minStock) || 0
-                    const currentBuffer = editedBuffer ?? Number(currentNotification.buffer) || 0
-                    
-                    console.log("[v0] Modal values:", { 
+                    const currentMinStock = editedMinStock ?? (Number(currentNotification.minStock) || 0)
+                    const currentBuffer = editedBuffer ?? (Number(currentNotification.buffer) || 0)
+
+                    console.log("[v0] Modal values:", {
                       currentMinStock,
                       currentBuffer,
                       fromNotification: currentNotification.minStock,
-                      fromBuffer: currentNotification.buffer
+                      fromBuffer: currentNotification.buffer,
                     })
-                    
+
                     setSelectedNotification(currentNotification)
                     setEditedMinStock(currentMinStock)
                     setEditedBuffer(currentBuffer)
@@ -673,10 +680,13 @@ export default function NotificationsPage() {
                 <p className="text-sm text-[#938d7a]">{selectedNotification.product}</p>
                 <p className="text-xs text-[#938d7a]">Updated 5m ago</p>
               </div>
-              <button onClick={() => {
-                setSelectedNotification(null)
-                setIsSaving(false) // Reset saving state when closing modal
-              }} className="text-[#938d7a] hover:text-black">
+              <button
+                onClick={() => {
+                  setSelectedNotification(null)
+                  setIsSaving(false) // Reset saving state when closing modal
+                }}
+                className="text-[#938d7a] hover:text-black"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -717,10 +727,14 @@ export default function NotificationsPage() {
                     onClick={() => {
                       // When turning off editing, ensure we keep the edited value
                       if (isEditingMinStock) {
-                        setSelectedNotification(prev => prev ? {
-                          ...prev,
-                          minStock: editedMinStock
-                        } : prev)
+                        setSelectedNotification((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                minStock: editedMinStock,
+                              }
+                            : prev,
+                        )
                       }
                       setIsEditingMinStock(!isEditingMinStock)
                     }}
@@ -739,10 +753,14 @@ export default function NotificationsPage() {
                         console.log("[v0] Setting minStock to:", newValue)
                         setEditedMinStock(isNaN(newValue) ? 0 : newValue)
                         // Update the selected notification to preserve the value
-                        setSelectedNotification(prev => prev ? {
-                          ...prev,
-                          minStock: isNaN(newValue) ? 0 : newValue
-                        } : prev)
+                        setSelectedNotification((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                minStock: isNaN(newValue) ? 0 : newValue,
+                              }
+                            : prev,
+                        )
                       }}
                       className="text-3xl font-bold text-black w-24 border-b-2 border-[#cecabf] focus:outline-none focus:border-black"
                     />
@@ -761,10 +779,14 @@ export default function NotificationsPage() {
                     onClick={() => {
                       // When turning off editing, ensure we keep the edited value
                       if (isEditingBuffer) {
-                        setSelectedNotification(prev => prev ? {
-                          ...prev,
-                          buffer: editedBuffer
-                        } : prev)
+                        setSelectedNotification((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                buffer: editedBuffer,
+                              }
+                            : prev,
+                        )
                       }
                       setIsEditingBuffer(!isEditingBuffer)
                     }}
@@ -783,10 +805,14 @@ export default function NotificationsPage() {
                         console.log("[v0] Setting buffer to:", newValue)
                         setEditedBuffer(isNaN(newValue) ? 0 : newValue)
                         // Update the selected notification to preserve the value
-                        setSelectedNotification(prev => prev ? {
-                          ...prev,
-                          buffer: isNaN(newValue) ? 0 : newValue
-                        } : prev)
+                        setSelectedNotification((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                buffer: isNaN(newValue) ? 0 : newValue,
+                              }
+                            : prev,
+                        )
                       }}
                       className="text-3xl font-bold text-black w-24 border-b-2 border-[#cecabf] focus:outline-none focus:border-black"
                     />
