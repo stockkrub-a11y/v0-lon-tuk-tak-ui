@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import Link from "next/link"
 import {
   Search,
@@ -51,17 +51,19 @@ export default function StocksPage() {
   const [showFilterMenu, setShowFilterMenu] = useState(false)
   const [categories, setCategories] = useState<string[]>([])
 
-  useEffect(() => {
-    fetchStocks()
-    fetchCategories()
-  }, [searchQuery, selectedCategory, selectedFlag, sortBy])
+  const searchDebounceTimer = useRef<NodeJS.Timeout | null>(null)
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("")
+  const [isFetching, setIsFetching] = useState(false)
 
-  async function fetchStocks() {
+  const fetchStocks = useCallback(async () => {
+    if (isFetching) return // Prevent multiple simultaneous fetches
+
+    setIsFetching(true)
     try {
       console.log("[v0] Fetching stock levels...")
 
       const data = await getStockLevels({
-        search: searchQuery || undefined,
+        search: debouncedSearchQuery || undefined,
         category: selectedCategory || undefined,
         flag: selectedFlag || undefined,
         sort_by: sortBy || undefined,
@@ -88,10 +90,11 @@ export default function StocksPage() {
       setShowOfflineBanner(true)
     } finally {
       setIsLoading(false)
+      setIsFetching(false)
     }
-  }
+  }, [debouncedSearchQuery, selectedCategory, selectedFlag, sortBy, isFetching])
 
-  async function fetchCategories() {
+  const fetchCategories = useCallback(async () => {
     try {
       const data = await getStockCategories()
       console.log("[v0] Categories response:", data)
@@ -101,7 +104,31 @@ export default function StocksPage() {
     } catch (error) {
       console.error("[v0] Failed to fetch categories:", error)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    if (searchDebounceTimer.current) {
+      clearTimeout(searchDebounceTimer.current)
+    }
+
+    searchDebounceTimer.current = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery)
+    }, 300) // 300ms debounce
+
+    return () => {
+      if (searchDebounceTimer.current) {
+        clearTimeout(searchDebounceTimer.current)
+      }
+    }
+  }, [searchQuery])
+
+  useEffect(() => {
+    fetchStocks()
+  }, [debouncedSearchQuery, selectedCategory, selectedFlag, sortBy]) // Removed fetchStocks from dependencies
+
+  useEffect(() => {
+    fetchCategories()
+  }, []) // Removed fetchCategories from dependencies
 
   function getFlagColor(flag: string): string {
     switch (flag) {
