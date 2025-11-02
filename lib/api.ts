@@ -669,8 +669,14 @@ export async function getSearchSuggestions(search: string) {
 // Prediction Functions - Keep using backend for ML operations
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
 
+console.log("[v0] ========== ENVIRONMENT DEBUG ==========")
+console.log("[v0] process.env.NEXT_PUBLIC_API_URL:", process.env.NEXT_PUBLIC_API_URL)
 console.log("[v0] API_BASE_URL configured as:", API_BASE_URL)
-console.log("[v0] NEXT_PUBLIC_API_URL env var:", process.env.NEXT_PUBLIC_API_URL)
+console.log(
+  "[v0] All NEXT_PUBLIC_ env vars:",
+  Object.keys(process.env).filter((k) => k.startsWith("NEXT_PUBLIC_")),
+)
+console.log("[v0] =====================================")
 
 export async function predictSales(nForecast = 3) {
   try {
@@ -682,10 +688,27 @@ export async function predictSales(nForecast = 3) {
     })
 
     if (!response.ok) {
-      throw new Error(`Prediction failed: ${response.status}`)
+      let errorMessage = `Prediction failed: ${response.status}`
+      try {
+        const errorData = await response.json()
+        console.error("[v0] Backend error response:", errorData)
+        errorMessage = errorData.detail || errorData.message || errorMessage
+      } catch (e) {
+        // If response is not JSON, try to get text
+        try {
+          const errorText = await response.text()
+          console.error("[v0] Backend error text:", errorText)
+          if (errorText) errorMessage = errorText
+        } catch (textError) {
+          console.error("[v0] Could not parse error response")
+        }
+      }
+      throw new Error(errorMessage)
     }
 
-    return await response.json()
+    const result = await response.json()
+    console.log("[v0] Prediction successful:", result)
+    return result
   } catch (error) {
     console.error("[v0] Prediction failed:", error)
     console.error("[v0] Error details:", {

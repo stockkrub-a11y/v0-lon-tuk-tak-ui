@@ -1382,6 +1382,11 @@ async def get_existing_forecasts():
 @app.post("/predict")
 async def predict_sales(n_forecast: int = Query(3, description="Number of months to forecast")):
     """Generate sales forecasts for n months"""
+    print(f"\n{'='*80}", flush=True)
+    print(f"🎯 PREDICT ENDPOINT CALLED - n_forecast={n_forecast}", flush=True)
+    print(f"{'='*80}\n", flush=True)
+    sys.stdout.flush()
+    
     try:
         print(f"[Backend] Generating {n_forecast} month forecast...")
         
