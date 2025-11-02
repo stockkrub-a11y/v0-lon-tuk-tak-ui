@@ -300,17 +300,62 @@ export default function PredictPage() {
                   <div className="text-sm text-[#938d7a]">You can navigate to other pages while waiting.</div>
                 </div>
               ) : forecastData.length === 0 ? (
-                <div className="text-center py-8">
-                  <div className="text-[#938d7a] mb-2">No forecast data available.</div>
-                  <div className="text-sm text-[#938d7a] mb-4">
-                    Upload sales data first, then click "Predict System" to generate predictions.
+                <div className="text-center py-12">
+                  <TrendingUp className="w-16 h-16 text-[#cecabf] mx-auto mb-4" />
+                  <h4 className="text-lg font-semibold text-black mb-2">No Forecast Data Available</h4>
+                  <p className="text-[#938d7a] mb-6 max-w-md mx-auto">
+                    To generate sales predictions, you need to train the ML model first by uploading your product and
+                    sales data files.
+                  </p>
+
+                  <div className="bg-[#f8f5ee] rounded-lg p-6 max-w-2xl mx-auto mb-6 text-left">
+                    <h5 className="font-semibold text-black mb-3">How to get started:</h5>
+                    <ol className="space-y-2 text-sm text-[#1e1e1e]">
+                      <li className="flex items-start gap-2">
+                        <span className="font-bold text-black">1.</span>
+                        <span>
+                          Go to the <strong>Stocks</strong> page
+                        </span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="font-bold text-black">2.</span>
+                        <span>
+                          Click <strong>"Upload Product List"</strong> and select your product file (Excel/CSV)
+                        </span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="font-bold text-black">3.</span>
+                        <span>
+                          Click <strong>"Upload Sale Stock"</strong> and select your sales file (Excel/CSV)
+                        </span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="font-bold text-black">4.</span>
+                        <span>The model will train automatically and redirect you back here</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="font-bold text-black">5.</span>
+                        <span>
+                          Click <strong>"Predict System"</strong> to generate forecasts
+                        </span>
+                      </li>
+                    </ol>
                   </div>
-                  <button
-                    onClick={loadExistingForecasts}
-                    className="px-4 py-2 bg-[#efece3] hover:bg-[#cecabf] rounded-lg transition-colors text-sm font-medium text-black"
-                  >
-                    Refresh
-                  </button>
+
+                  <div className="flex items-center justify-center gap-3">
+                    <Link
+                      href="/dashboard/stocks"
+                      className="px-6 py-3 bg-[#cecabf] hover:bg-[#b4bbcb] rounded-lg transition-colors text-black font-medium"
+                    >
+                      Go to Stocks Page
+                    </Link>
+                    <button
+                      onClick={loadExistingForecasts}
+                      className="px-6 py-3 bg-[#efece3] hover:bg-[#cecabf] rounded-lg transition-colors text-black font-medium"
+                    >
+                      Refresh
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <>
