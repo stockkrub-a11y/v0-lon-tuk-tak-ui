@@ -314,6 +314,13 @@ async def upload_stock_files(
     try:
         print("[Backend] Processing stock upload...")
         
+        if not SUPABASE_AVAILABLE:
+            print("[Backend] ⚠️ Supabase not available")
+            raise HTTPException(
+                status_code=503,
+                detail="Database not available. Please check Supabase configuration."
+            )
+        
         # Read current stock file with fallback headers
         current_content = await current_stock.read()
         try:
@@ -1003,7 +1010,10 @@ async def get_dashboard_analytics():
     try:
         print("[Backend] Fetching dashboard analytics...")
         
-        if not engine:
+        # Note: This endpoint uses 'engine' which is deprecated. It should be migrated to use Supabase client.
+        # For now, it will likely fail if engine is None.
+        if not engine: 
+            print("[Backend] ⚠️ Deprecated 'engine' not available. Dashboard analytics will not work.")
             return {
                 "success": False,
                 "data": {
@@ -1011,7 +1021,8 @@ async def get_dashboard_analytics():
                     "low_stock_alerts": 0,
                     "sales_this_month": 0,
                     "out_of_stock": 0
-                }
+                },
+                "error": "'engine' not initialized. Migration to Supabase client required."
             }
         
         # Get metrics from base_data and base_stock
@@ -1093,8 +1104,10 @@ async def get_analysis_performance(request: dict):
         sku_list = request.get('sku_list', [])
         print(f"[Backend] Fetching performance comparison for SKUs: {sku_list}")
         
+        # Note: This endpoint uses 'engine' which is deprecated. It should be migrated to use Supabase client.
+        # For now, it will likely fail if engine is None.
         if not engine:
-            return {"success": False, "message": "Database not available", "chart_data": {}, "table_data": []}
+            return {"success": False, "message": "Database not available. 'engine' not initialized.", "chart_data": {}, "table_data": []}
         
         if not sku_list or len(sku_list) == 0:
             return {"success": False, "message": "No SKUs provided", "chart_data": {}, "table_data": []}
@@ -1122,8 +1135,10 @@ async def get_analysis_best_sellers(
     try:
         print(f"[Backend] Fetching best sellers for {year}-{month:02d} (limit {limit})...")
         
+        # Note: This endpoint uses 'engine' which is deprecated. It should be migrated to use Supabase client.
+        # For now, it will likely fail if engine is None.
         if not engine:
-            return {"success": False, "message": "Database not available", "data": []}
+            return {"success": False, "message": "Database not available. 'engine' not initialized.", "data": []}
         
         # Disabled: SQLAlchemy text() not available. Needs Supabase migration.
         return {"success": False, "message": "Not implemented: endpoint needs Supabase migration", "data": []}
@@ -1137,8 +1152,10 @@ async def get_performance_products(search: str = Query("", description="Search t
     try:
         print(f"[Backend] Fetching performance products from base_stock with search: '{search}'")
         
+        # Note: This endpoint uses 'engine' which is deprecated. It should be migrated to use Supabase client.
+        # For now, it will likely fail if engine is None.
         if not engine:
-            return {"success": False, "categories": {}, "all_products": []}
+            return {"success": False, "categories": {}, "all_products": [], "message": "Database not available. 'engine' not initialized."}
         
         # Disabled: SQLAlchemy text() not available. Needs Supabase migration.
         return {"success": False, "categories": {}, "all_products": [], "message": "Not implemented: endpoint needs Supabase migration"}
@@ -1152,8 +1169,10 @@ async def get_performance_products(search: str = Query("", description="Search t
 async def get_total_income(product_sku: str = "", category: str = ""):
     """Get total income analysis from base_data table with optional filters"""
     try:
+        # Note: This endpoint uses 'engine' which is deprecated. It should be migrated to use Supabase client.
+        # For now, it will likely fail if engine is None.
         if not engine:
-            return {"success": False, "message": "Database not available"}
+            return {"success": False, "message": "Database not available. 'engine' not initialized."}
         
         print(f"[Backend] Fetching total income data (product_sku={product_sku}, category={category})...")
         
@@ -1177,8 +1196,10 @@ async def get_search_suggestions(search: str = Query("", description="Search ter
     try:
         print(f"[Backend] Fetching search suggestions for: '{search}'")
         
+        # Note: This endpoint uses 'engine' which is deprecated. It should be migrated to use Supabase client.
+        # For now, it will likely fail if engine is None.
         if not engine:
-            return {"success": False, "suggestions": []}
+            return {"success": False, "suggestions": [], "message": "Database not available. 'engine' not initialized."}
         
         if not search or len(search) < 1:
             return {"success": True, "suggestions": []}
@@ -1222,7 +1243,6 @@ async def train_model(
             rows_uploaded = len(df_cleaned)
             print(f"[Backend] Cleaned data: {rows_uploaded} rows")
             # Insert cleaned data into Supabase
-            from DB_server import insert_data
             import pandas as pd
             records = df_cleaned.to_dict(orient='records')
             print(f"[Backend] Preparing to insert {len(records)} records into base_data")
@@ -1390,30 +1410,44 @@ async def predict_sales(n_forecast: int = Query(3, description="Number of months
     try:
         print(f"[Backend] Generating {n_forecast} month forecast...")
         
+        if not SUPABASE_AVAILABLE:
+            print("[Backend] ⚠️ Supabase not available")
+            raise HTTPException(
+                status_code=503,
+                detail="Database not available. Please check Supabase configuration."
+            )
+        
         # Check if model is trained (base_data exists)
         try:
             print("[Backend] Checking base_data table...")
-            df = execute_query("SELECT * FROM base_data")
+            df = execute_query("SELECT * FROM base_data LIMIT 1")
             if df is None or len(df) == 0:
+                print("[Backend] No training data found in base_data")
                 raise HTTPException(
                     status_code=400,
-                    detail="No training data available. Please train the model first."
+                    detail="No training data available. Please train the model first by uploading product and sales data."
                 )
+            print(f"[Backend] Found training data: {len(df)} rows")
+        except HTTPException:
+            raise
         except Exception as e:
             print(f"[Backend] Error checking base_data: {str(e)}")
+            import traceback
+            traceback.print_exc()
             raise HTTPException(
                 status_code=400,
-                detail="Model not trained. Please upload and train with data first."
+                detail=f"Failed to check training data: {str(e)}"
             )
         
         print("[Backend] Loading trained model and data...")
         
         if not os.path.exists("xgb_sales_model.pkl"):
+            print("[Backend] Model file not found")
             raise HTTPException(
                 status_code=400,
-                detail="Model file not found. Please train the model first."
+                detail="Model file not found. Please train the model first by uploading product and sales data."
             )
-        
+
         # Load model
         base_model = joblib.load("xgb_sales_model.pkl")
         
