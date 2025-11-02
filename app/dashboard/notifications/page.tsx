@@ -278,17 +278,14 @@ export default function NotificationsPage() {
   const handleSaveManualValues = async () => {
     if (!selectedNotification) return
 
-    // Always use edited values if they exist, regardless of edit state
-    const minStockValue = editedMinStock ?? selectedNotification.minStock
-    const bufferValue = editedBuffer ?? selectedNotification.buffer
+    // Always use the edited values when saving
+    const finalMinStock = Number(editedMinStock) || 0
+    const finalBuffer = Number(editedBuffer) || 0
 
-    console.log("[v0] Saving values:", {
-      editedMinStock,
-      editedBuffer,
-      currentMinStock: selectedNotification.minStock,
-      currentBuffer: selectedNotification.buffer,
-      finalMinStock: minStockValue,
-      finalBuffer: bufferValue
+    console.log("[v0] Saving values to backend:", {
+      sku: selectedNotification.sku,
+      minStock: finalMinStock,
+      buffer: finalBuffer
     })
 
     setIsSaving(true)
@@ -296,10 +293,10 @@ export default function NotificationsPage() {
       // Try to update via backend if available
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
       try {
-        console.log("[v0] Sending update for SKU:", selectedNotification.sku, "minstock:", minStockValue, "buffer:", bufferValue)
+        console.log("[v0] Sending update for SKU:", selectedNotification.sku, "minstock:", finalMinStock, "buffer:", finalBuffer)
         const res = await fetch(`${apiUrl}/notifications/update_manual_values?product_sku=${encodeURIComponent(
           selectedNotification.sku,
-        )}&minstock=${minStockValue}&buffer=${bufferValue}`, {
+        )}&minstock=${finalMinStock}&buffer=${finalBuffer}`, {
           method: 'POST',
         })
 
@@ -717,7 +714,16 @@ export default function NotificationsPage() {
                 <div className="flex items-center justify-between mb-2">
                   <p className="text-xs text-[#938d7a]">Min Stock</p>
                   <button
-                    onClick={() => setIsEditingMinStock(!isEditingMinStock)}
+                    onClick={() => {
+                      // When turning off editing, ensure we keep the edited value
+                      if (isEditingMinStock) {
+                        setSelectedNotification(prev => prev ? {
+                          ...prev,
+                          minStock: editedMinStock
+                        } : prev)
+                      }
+                      setIsEditingMinStock(!isEditingMinStock)
+                    }}
                     className="text-[#938d7a] hover:text-black"
                   >
                     <Edit2 className="w-3 h-3" />
@@ -732,11 +738,16 @@ export default function NotificationsPage() {
                         const newValue = Number(e.target.value)
                         console.log("[v0] Setting minStock to:", newValue)
                         setEditedMinStock(isNaN(newValue) ? 0 : newValue)
+                        // Update the selected notification to preserve the value
+                        setSelectedNotification(prev => prev ? {
+                          ...prev,
+                          minStock: isNaN(newValue) ? 0 : newValue
+                        } : prev)
                       }}
                       className="text-3xl font-bold text-black w-24 border-b-2 border-[#cecabf] focus:outline-none focus:border-black"
                     />
                   ) : (
-                    <p className="text-3xl font-bold text-black">{selectedNotification.minStock}</p>
+                    <p className="text-3xl font-bold text-black">{editedMinStock ?? selectedNotification.minStock}</p>
                   )}
                   <Shield className="w-8 h-8 text-[#938d7a]" />
                 </div>
@@ -747,7 +758,16 @@ export default function NotificationsPage() {
                 <div className="flex items-center justify-between mb-2">
                   <p className="text-xs text-[#938d7a]">Buffer</p>
                   <button
-                    onClick={() => setIsEditingBuffer(!isEditingBuffer)}
+                    onClick={() => {
+                      // When turning off editing, ensure we keep the edited value
+                      if (isEditingBuffer) {
+                        setSelectedNotification(prev => prev ? {
+                          ...prev,
+                          buffer: editedBuffer
+                        } : prev)
+                      }
+                      setIsEditingBuffer(!isEditingBuffer)
+                    }}
                     className="text-[#938d7a] hover:text-black"
                   >
                     <Edit2 className="w-3 h-3" />
@@ -762,11 +782,16 @@ export default function NotificationsPage() {
                         const newValue = Number(e.target.value)
                         console.log("[v0] Setting buffer to:", newValue)
                         setEditedBuffer(isNaN(newValue) ? 0 : newValue)
+                        // Update the selected notification to preserve the value
+                        setSelectedNotification(prev => prev ? {
+                          ...prev,
+                          buffer: isNaN(newValue) ? 0 : newValue
+                        } : prev)
                       }}
                       className="text-3xl font-bold text-black w-24 border-b-2 border-[#cecabf] focus:outline-none focus:border-black"
                     />
                   ) : (
-                    <p className="text-3xl font-bold text-black">{selectedNotification.buffer}</p>
+                    <p className="text-3xl font-bold text-black">{editedBuffer ?? selectedNotification.buffer}</p>
                   )}
                   <Target className="w-8 h-8 text-[#938d7a]" />
                 </div>
