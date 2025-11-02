@@ -393,13 +393,16 @@ async def upload_stock_files(
                 "หมวดหมู่ย่อย" : 'category' 
             })
         df_curr["stock_level"] = pd.to_numeric(df_curr["stock_level"], errors='coerce').fillna(0).astype(int)
-        df_prev["stock_level"] = pd.to_numeric(df_prev["stock_level"], errors='coerce').fillna(0).astype(int)
+        if df_prev is not None:
+            df_prev["stock_level"] = pd.to_numeric(df_prev["stock_level"], errors='coerce').fillna(0).astype(int)
         # Normalize column names (handle upper/lowercase automatically)
         df_curr.columns = df_curr.columns.str.strip().str.lower()
-        df_prev.columns = df_prev.columns.str.strip().str.lower()
+        if df_prev is not None:
+            df_prev.columns = df_prev.columns.str.strip().str.lower()
         print("[Debug] df_curr columns:", df_curr.columns.tolist())
         df_curr = df_curr.dropna(subset=['product_sku','category'])
-        df_prev = df_prev.dropna(subset=['product_sku','category'])
+        if df_prev is not None:
+            df_prev = df_prev.dropna(subset=['product_sku','category'])
         try:
             # Save current stock data to Supabase
             print("[Backend] Saving current stock data to Supabase...")
@@ -580,7 +583,7 @@ async def upload_stock_files(
             prev_counter = 0
             prev_flag = 'stage'
             
-            if base_stock_exists and not df_prev.empty:
+            if base_stock_exists and df_prev is not None and not df_prev.empty:
                 prev_row = df_prev[df_prev['product_sku'] == product_sku]
                 if not prev_row.empty:
                     prev_counter = prev_row.iloc[0].get('unchanged_counter', 0)
@@ -1242,6 +1245,15 @@ async def train_model(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+# </CHANGE> Adding /train1 as an alias to /train for backward compatibility
+@app.post("/train1")
+async def train_model_alias(
+    product_file: UploadFile = File(...),
+    sales_file: UploadFile = File(...)
+):
+    """Alias for /train endpoint - for backward compatibility"""
+    return await train_model(product_file, sales_file)
 
 @app.get("/predict/existing")
 async def get_existing_forecasts():
