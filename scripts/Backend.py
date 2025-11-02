@@ -73,8 +73,8 @@ app.add_middleware(
         "http://127.0.0.1:3001",
         "https://v0-lontuktak.final.vercel.app",
         "https://v0-lontuktak-final.vercel.app",
-        "*",  # Allow all origins for development
     ],
+    allow_origin_regex=r"https://.*\.vercel\.app",  # Allow all Vercel preview URLs
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -339,7 +339,7 @@ async def upload_stock_files(
             drop_columns = [col for col in all_columns if col not in keep_columns and col != '#']
             if drop_columns:
                 print(f"[Backend] Removing unnecessary columns: {', '.join(drop_columns)}")
-                df_curr = df_curr.drop(drop_columns, axis=1, errors='ignore')
+                df_curr = df_curr.drop(columns=drop_columns, axis=1, errors='ignore')
                 
         except Exception as e:
             print(f"[Backend] Failed to load current stock file: {str(e)}")
@@ -603,10 +603,7 @@ async def upload_stock_files(
             report_df.at[idx, 'unchanged_counter'] = new_counter
             report_df.at[idx, 'flag'] = new_flag
         
-        # Save report to stock_notifications table
-        print("[Backend] Saving to stock_notifications table...")
-        report_df['created_at'] = datetime.now()
-    # Save to Supabase (already done above)
+        # Save to Supabase (already done above)
         
         print("[Backend] Updating base_stock table...")
         
