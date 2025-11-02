@@ -86,8 +86,8 @@ async def startup_event():
     print("\n" + "="*80, flush=True)
     print("🚀 LON TUKTAK BACKEND STARTED", flush=True)
     print("="*80, flush=True)
-    print(f"✅ Backend loaded from: {__file__}", flush=True)
-    print(f"✅ Database engine available: {engine is not None}", flush=True)
+    print(f"✅ Backend loaded from: {__file__}")
+    print(f"✅ Database engine available: {engine is not None}")
     print("="*80 + "\n", flush=True)
     sys.stdout.flush()
 
