@@ -75,11 +75,13 @@ app.add_middleware(
         "http://127.0.0.1:3001",
         "https://v0-lontuktak.final.vercel.app",
         "https://v0-lontuktak-final.vercel.app",
+        "https://v0-lon-tuk-tak-dl0fs5whj-stockkrub-1951s-projects.vercel.app",
     ],
-    allow_origin_regex=r"https://.*\.vercel\.app",  # Allow all Vercel preview URLs
+    allow_origin_regex=r"https://.*\.vercel\.app$",  # Allow all Vercel preview URLs
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 @app.on_event("startup")
