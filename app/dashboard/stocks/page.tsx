@@ -1,8 +1,7 @@
 "use client"
 
 import type React from "react"
-
-import { useState, useEffect, useCallback, useRef } from "react"
+import { useState, useEffect, useCallback, useRef, memo } from "react"
 import Link from "next/link"
 import {
   Search,
@@ -22,6 +21,56 @@ import {
   ChevronDown,
 } from "lucide-react"
 import { trainModel, getStockLevels, getStockCategories } from "@/lib/api"
+
+const StockItemCard = memo(
+  ({
+    item,
+  }: {
+    item: {
+      id: number
+      name: string
+      quantity: number
+      category: string
+      flag: string
+      flagColor: string
+    }
+  }) => {
+    const getFlagText = (flag: string): string => {
+      switch (flag) {
+        case "active":
+          return "Active"
+        case "inactive":
+          return "Inactive"
+        case "just added stock":
+          return "Just Added"
+        default:
+          return "Stage"
+      }
+    }
+
+    return (
+      <div className="flex items-center justify-between p-4 bg-[#f8f5ee] rounded-lg border border-[#cecabf]/20">
+        <div className="flex items-center gap-4">
+          <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.flagColor }} />
+          <div>
+            <h4 className="font-medium text-black">{item.name}</h4>
+            <p className="text-sm text-[#938d7a]">Quantity: {item.quantity}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="px-3 py-1 bg-white border border-[#cecabf] rounded-full text-xs text-black">
+            {item.category}
+          </span>
+          <span className="px-3 py-1 rounded-full text-xs text-white" style={{ backgroundColor: item.flagColor }}>
+            {getFlagText(item.flag)}
+          </span>
+        </div>
+      </div>
+    )
+  },
+)
+
+StockItemCard.displayName = "StockItemCard"
 
 export default function StocksPage() {
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false)
@@ -54,6 +103,19 @@ export default function StocksPage() {
   const searchDebounceTimer = useRef<NodeJS.Timeout | null>(null)
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("")
   const [isFetching, setIsFetching] = useState(false)
+
+  const getFlagColor = useCallback((flag: string): string => {
+    switch (flag) {
+      case "active":
+        return "#00a63e"
+      case "inactive":
+        return "#938d7a"
+      case "just added stock":
+        return "#4a90e2"
+      default:
+        return "#cecabf"
+    }
+  }, [])
 
   const fetchStocks = useCallback(async () => {
     if (isFetching) return
@@ -93,7 +155,7 @@ export default function StocksPage() {
       setIsLoading(false)
       setIsFetching(false)
     }
-  }, [debouncedSearchQuery, selectedCategory, selectedFlag, sortBy]) // Removed isFetching from dependencies
+  }, [debouncedSearchQuery, selectedCategory, selectedFlag, sortBy, isFetching, getFlagColor]) // Removed isFetching from dependencies
 
   const fetchCategories = useCallback(async () => {
     try {
@@ -130,32 +192,6 @@ export default function StocksPage() {
   useEffect(() => {
     fetchCategories()
   }, []) // Removed fetchCategories from dependencies
-
-  function getFlagColor(flag: string): string {
-    switch (flag) {
-      case "active":
-        return "#00a63e" // green
-      case "inactive":
-        return "#938d7a" // gray
-      case "just added stock":
-        return "#4a90e2" // blue
-      default:
-        return "#cecabf" // default
-    }
-  }
-
-  function getFlagText(flag: string): string {
-    switch (flag) {
-      case "active":
-        return "Active"
-      case "inactive":
-        return "Inactive"
-      case "just added stock":
-        return "Just Added"
-      default:
-        return "Stage"
-    }
-  }
 
   const openUploadModal = (type: "product" | "sale") => {
     setUploadType(type)
@@ -475,29 +511,7 @@ export default function StocksPage() {
             ) : (
               <div className="space-y-3">
                 {stockItems.map((item) => (
-                  <div
-                    key={item.id}
-                    className="flex items-center justify-between p-4 bg-[#f8f5ee] rounded-lg border border-[#cecabf]/20"
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.flagColor }} />
-                      <div>
-                        <h4 className="font-medium text-black">{item.name}</h4>
-                        <p className="text-sm text-[#938d7a]">Quantity: {item.quantity}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <span className="px-3 py-1 bg-white border border-[#cecabf] rounded-full text-xs text-black">
-                        {item.category}
-                      </span>
-                      <span
-                        className="px-3 py-1 rounded-full text-xs text-white"
-                        style={{ backgroundColor: item.flagColor }}
-                      >
-                        {getFlagText(item.flag)}
-                      </span>
-                    </div>
-                  </div>
+                  <StockItemCard key={item.id} item={item} />
                 ))}
               </div>
             )}

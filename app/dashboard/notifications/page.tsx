@@ -1,8 +1,9 @@
 "use client"
 
-import type React from "react"
+// import type React from "react" // Redundant import, React is already imported below
 
-import { useState, useEffect, useMemo, useCallback, useRef } from "react"
+import type React from "react"
+import { useState, useEffect, useMemo, useCallback, useRef, memo } from "react"
 import Link from "next/link"
 import {
   Search,
@@ -48,6 +49,87 @@ interface Notification {
   buffer: number
   recommendedRestock: number
 }
+
+const NotificationCard = memo(
+  ({
+    notification,
+    onClick,
+  }: {
+    notification: Notification
+    onClick: () => void
+  }) => {
+    const getStatusColor = (status: NotificationStatus) => {
+      switch (status) {
+        case "critical":
+          return "border-l-[#ea5457]"
+        case "warning":
+          return "border-l-[#eaac54]"
+        case "safe":
+          return "border-l-[#00a63e]"
+      }
+    }
+
+    const getStatusIcon = (status: NotificationStatus) => {
+      switch (status) {
+        case "critical":
+          return <AlertCircle className="w-5 h-5 text-[#ea5457]" />
+        case "warning":
+          return <PackageIcon className="w-5 h-5 text-[#eaac54]" />
+        case "safe":
+          return <CheckCircle className="w-5 h-5 text-[#00a63e]" />
+      }
+    }
+
+    const getStatusTextColor = (status: NotificationStatus) => {
+      switch (status) {
+        case "critical":
+          return "text-[#ea5457]"
+        case "warning":
+          return "text-[#eaac54]"
+        case "safe":
+          return "text-[#00a63e]"
+      }
+    }
+
+    return (
+      <button
+        onClick={onClick}
+        className={`w-full bg-white rounded-lg p-6 border-l-4 ${getStatusColor(
+          notification.status,
+        )} hover:shadow-md transition-shadow text-left relative`}
+      >
+        <div className="flex items-start gap-4">
+          {getStatusIcon(notification.status)}
+          <div className="flex-1">
+            <h3 className="text-lg font-semibold text-black mb-1">
+              <span className={getStatusTextColor(notification.status)}>{notification.title}</span> - {notification.sku}
+            </h3>
+            <p className="text-sm text-[#938d7a] mb-2">{notification.product}</p>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="px-2 py-0.5 bg-[#efece3] text-[#938d7a] text-xs rounded-full font-medium">
+                {notification.category}
+              </span>
+            </div>
+            <p className="text-sm text-[#938d7a] mt-1">
+              Estimated to run out in{" "}
+              <span className={getStatusTextColor(notification.status)}>{notification.estimatedTime}</span>
+              {notification.recommendUnits > 0 && (
+                <>
+                  {" "}
+                  - Recommend Restocking{" "}
+                  <span className={getStatusTextColor(notification.status)}>{notification.recommendUnits} Units</span>
+                </>
+              )}
+            </p>
+          </div>
+          <div className="w-2 h-2 bg-[#547fff] rounded-full" />
+        </div>
+      </button>
+    )
+  },
+)
+
+NotificationCard.displayName = "NotificationCard"
 
 export default function NotificationsPage() {
   const [selectedNotification, setSelectedNotification] = useState<Notification | null>(null)
@@ -184,45 +266,64 @@ export default function NotificationsPage() {
     }
   }
 
+  const handleNotificationClick = useCallback(
+    (notification: Notification) => {
+      const currentNotification = notifications.find((n) => n.sku === notification.sku) ?? notification
+
+      console.log("[v0] Opening modal for:", currentNotification.sku, {
+        minStock: currentNotification.minStock,
+        buffer: currentNotification.buffer,
+      })
+
+      setSelectedNotification(currentNotification)
+      setEditedMinStock(Number(currentNotification.minStock) || 0)
+      setEditedBuffer(Number(currentNotification.buffer) || 0)
+      setIsEditingMinStock(false)
+      setIsEditingBuffer(false)
+      setIsSaving(false)
+    },
+    [notifications],
+  )
+
   const filteredAndSortedNotifications = useMemo(() => {
-    return notifications
-      .filter((n) => {
-        // Status filter
-        if (selectedStatuses.length > 0 && !selectedStatuses.includes(n.status)) {
-          return false
-        }
+    const filtered = notifications.filter((n) => {
+      // Status filter
+      if (selectedStatuses.length > 0 && !selectedStatuses.includes(n.status)) {
+        return false
+      }
 
-        // Category filter
-        if (selectedCategories.length > 0 && !selectedCategories.includes(n.category)) {
-          return false
-        }
+      // Category filter
+      if (selectedCategories.length > 0 && !selectedCategories.includes(n.category)) {
+        return false
+      }
 
-        // Search filter (searches in SKU and product name) - using debounced query
-        if (
-          debouncedSearchQuery &&
-          !n.sku.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) &&
-          !n.product.toLowerCase().includes(debouncedSearchQuery.toLowerCase())
-        ) {
-          return false
-        }
+      // Search filter (searches in SKU and product name) - using debounced query
+      if (debouncedSearchQuery) {
+        const query = debouncedSearchQuery.toLowerCase()
+        const matchesSku = n.sku.toLowerCase().includes(query)
+        const matchesProduct = n.product.toLowerCase().includes(query)
+        if (!matchesSku && !matchesProduct) return false
+      }
 
-        return true
-      })
-      .sort((a, b) => {
-        // Apply sorting
-        switch (sortBy) {
-          case "name-asc":
-            return a.product.localeCompare(b.product)
-          case "name-desc":
-            return b.product.localeCompare(a.product)
-          case "quantity-asc":
-            return a.currentStock - b.currentStock
-          case "quantity-desc":
-            return b.currentStock - a.currentStock
-          default:
-            return 0
-        }
-      })
+      return true
+    })
+
+    if (sortBy === "none") return filtered
+
+    return filtered.sort((a, b) => {
+      switch (sortBy) {
+        case "name-asc":
+          return a.product.localeCompare(b.product)
+        case "name-desc":
+          return b.product.localeCompare(a.product)
+        case "quantity-asc":
+          return a.currentStock - b.currentStock
+        case "quantity-desc":
+          return b.currentStock - a.currentStock
+        default:
+          return 0
+      }
+    })
   }, [notifications, selectedStatuses, selectedCategories, debouncedSearchQuery, sortBy])
 
   // Get unique categories from notifications
@@ -235,38 +336,10 @@ export default function NotificationsPage() {
     return uniqueCategories.filter((cat) => cat.toLowerCase().includes(categorySearch.toLowerCase()))
   }, [uniqueCategories, categorySearch])
 
-  const getStatusColor = (status: NotificationStatus) => {
-    switch (status) {
-      case "critical":
-        return "border-l-[#ea5457]"
-      case "warning":
-        return "border-l-[#eaac54]"
-      case "safe":
-        return "border-l-[#00a63e]"
-    }
-  }
-
-  const getStatusIcon = (status: NotificationStatus) => {
-    switch (status) {
-      case "critical":
-        return <AlertCircle className="w-5 h-5 text-[#ea5457]" />
-      case "warning":
-        return <PackageIcon className="w-5 h-5 text-[#eaac54]" />
-      case "safe":
-        return <CheckCircle className="w-5 h-5 text-[#00a63e]" />
-    }
-  }
-
-  const getStatusTextColor = (status: NotificationStatus) => {
-    switch (status) {
-      case "critical":
-        return "text-[#ea5457]"
-      case "warning":
-        return "text-[#eaac54]"
-      case "safe":
-        return "text-[#00a63e]"
-    }
-  }
+  // These functions are only used within the main component's JSX and don't need to be outside NotificationCard
+  // const getStatusColor = (status: NotificationStatus) => { ... }
+  // const getStatusIcon = (status: NotificationStatus) => { ... }
+  // const getStatusTextColor = (status: NotificationStatus) => { ... }
 
   const exportToCSV = () => {
     const headers = [
@@ -474,6 +547,9 @@ export default function NotificationsPage() {
     } finally {
       setIsUploading(false)
       setIsCurrentStockModalOpen(false)
+      // Reset file states after upload
+      setPreviousStockFile(null)
+      setCurrentStockFile(null)
     }
   }
 
@@ -635,58 +711,11 @@ export default function NotificationsPage() {
           ) : (
             <div className="space-y-4">
               {filteredAndSortedNotifications.map((notification) => (
-                <button
+                <NotificationCard
                   key={notification.id}
-                  onClick={() => {
-                    const currentNotification = notifications.find((n) => n.sku === notification.sku) ?? notification
-
-                    console.log("[v0] Opening modal for:", currentNotification.sku, {
-                      minStock: currentNotification.minStock,
-                      buffer: currentNotification.buffer,
-                    })
-
-                    setSelectedNotification(currentNotification)
-                    // Use the notification's current values, not any stale edited values
-                    setEditedMinStock(Number(currentNotification.minStock) || 0)
-                    setEditedBuffer(Number(currentNotification.buffer) || 0)
-                    setIsEditingMinStock(false)
-                    setIsEditingBuffer(false)
-                    setIsSaving(false)
-                  }}
-                  className={`w-full bg-white rounded-lg p-6 border-l-4 ${getStatusColor(
-                    notification.status,
-                  )} hover:shadow-md transition-shadow text-left relative`}
-                >
-                  <div className="flex items-start gap-4">
-                    {getStatusIcon(notification.status)}
-                    <div className="flex-1">
-                      <h3 className="text-lg font-semibold text-black mb-1">
-                        <span className={getStatusTextColor(notification.status)}>{notification.title}</span> -{" "}
-                        {notification.sku}
-                      </h3>
-                      <p className="text-sm text-[#938d7a] mb-2">{notification.product}</p>
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="px-2 py-0.5 bg-[#efece3] text-[#938d7a] text-xs rounded-full font-medium">
-                          {notification.category}
-                        </span>
-                      </div>
-                      <p className="text-sm text-[#938d7a] mt-1">
-                        Estimated to run out in{" "}
-                        <span className={getStatusTextColor(notification.status)}>{notification.estimatedTime}</span>
-                        {notification.recommendUnits > 0 && (
-                          <>
-                            {" "}
-                            - Recommend Restocking{" "}
-                            <span className={getStatusTextColor(notification.status)}>
-                              {notification.recommendUnits} Units
-                            </span>
-                          </>
-                        )}
-                      </p>
-                    </div>
-                    <div className="w-2 h-2 bg-[#547fff] rounded-full" />
-                  </div>
-                </button>
+                  notification={notification}
+                  onClick={() => handleNotificationClick(notification)}
+                />
               ))}
             </div>
           )}
@@ -1081,6 +1110,8 @@ export default function NotificationsPage() {
               <button
                 onClick={() => {
                   setIsPreviousStockModalOpen(false)
+                  // Clear previous file selection if cancelling
+                  setPreviousStockFile(null)
                 }}
                 className="flex-1 px-6 py-3 bg-white border border-[#cecabf] rounded-lg text-black font-medium hover:bg-[#f8f5ee] transition-colors"
               >
@@ -1137,6 +1168,8 @@ export default function NotificationsPage() {
               <button
                 onClick={() => {
                   setIsCurrentStockModalOpen(false)
+                  // Clear current file selection if cancelling
+                  setCurrentStockFile(null)
                 }}
                 className="flex-1 px-6 py-3 bg-white border border-[#cecabf] rounded-lg text-black font-medium hover:bg-[#f8f5ee] transition-colors"
               >
