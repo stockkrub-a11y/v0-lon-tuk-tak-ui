@@ -1180,7 +1180,7 @@ async def train_model(
                     if forecast_results and len(forecast_results) > 0:
                         import pandas as pd
                         from datetime import datetime
-                        from DB_server import insert_data, delete_data
+                        # insert_data and delete_data are already imported at the top of the file
                         
                         # Convert forecast results to DataFrame
                         print("[Backend] Processing forecast results...")
