@@ -132,8 +132,8 @@ export default function NotificationsPage() {
             currentStock: item.Stock || 0,
             decreaseRate: `${item["Decrease_Rate(%)"] || 0}%/week`,
             timeToRunOut: `${Math.round((item.Weeks_To_Empty || 0) * 7)} days`,
-            minStock: item.MinStock || 0,
-            buffer: item.Buffer || 0,
+            minStock: item.MinStock ?? item.min_stock ?? item.minstock ?? 0,
+            buffer: item.Buffer ?? item.buffer ?? item.reorder_qty ?? 0,
             recommendedRestock: item.Reorder_Qty || 0,
           }
         })
@@ -278,15 +278,28 @@ export default function NotificationsPage() {
   const handleSaveManualValues = async () => {
     if (!selectedNotification) return
 
+    // Always use edited values if they exist, regardless of edit state
+    const minStockValue = editedMinStock ?? selectedNotification.minStock
+    const bufferValue = editedBuffer ?? selectedNotification.buffer
+
+    console.log("[v0] Saving values:", {
+      editedMinStock,
+      editedBuffer,
+      currentMinStock: selectedNotification.minStock,
+      currentBuffer: selectedNotification.buffer,
+      finalMinStock: minStockValue,
+      finalBuffer: bufferValue
+    })
+
     setIsSaving(true)
     try {
       // Try to update via backend if available
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
       try {
-        console.log("[v0] Sending update for SKU:", selectedNotification.sku, "minstock:", editedMinStock, "buffer:", editedBuffer)
+        console.log("[v0] Sending update for SKU:", selectedNotification.sku, "minstock:", minStockValue, "buffer:", bufferValue)
         const res = await fetch(`${apiUrl}/notifications/update_manual_values?product_sku=${encodeURIComponent(
           selectedNotification.sku,
-        )}&minstock=${editedMinStock}&buffer=${editedBuffer}`, {
+        )}&minstock=${minStockValue}&buffer=${bufferValue}`, {
           method: 'POST',
         })
 
@@ -323,16 +336,27 @@ export default function NotificationsPage() {
       }
 
       // Supabase-only mode: update directly using client helper
-      const result = await updateNotificationManualValues(selectedNotification.sku, editedMinStock, editedBuffer)
+      const result = await updateNotificationManualValues(selectedNotification.sku, minStockValue, bufferValue)
       if (result && result.success) {
-        // Always refresh to get latest status/description from backend
+        // Store the current values before refresh
+        const savedMinStock = minStockValue
+        const savedBuffer = bufferValue
+        
+        // Refresh notifications to get latest status/description
         await fetchAndSetNotifications()
-        // Find and select updated notification from refreshed list
-        setSelectedNotification((prev) => {
-          if (!prev) return prev
-          const updated = notifications.find(n => n.sku === prev.sku)
-          return updated ?? prev
-        })
+        
+        // Update the selected notification with saved values
+        const updatedNotification = notifications.find(n => n.sku === selectedNotification.sku)
+        if (updatedNotification) {
+          setSelectedNotification({
+            ...updatedNotification,
+            minStock: savedMinStock,
+            buffer: savedBuffer
+          })
+          setEditedMinStock(savedMinStock)
+          setEditedBuffer(savedBuffer)
+        }
+        
         alert('Manual values updated successfully (Supabase-only mode).')
       } else {
         alert(`Failed to update manual values: ${result?.message || 'Unknown error'}`)
@@ -561,14 +585,26 @@ export default function NotificationsPage() {
                 <button
                   key={notification.id}
                   onClick={() => {
-                    // Find latest values from notifications array
-                    const latestNotification = notifications.find(n => n.sku === notification.sku) ?? notification
-                    // Initialize editing states with latest values
-                    setSelectedNotification(latestNotification)
-                    setEditedMinStock(latestNotification.minStock)
-                    setEditedBuffer(latestNotification.buffer)
+                    // Always use the current notification from the notifications array
+                    const currentNotification = notifications.find(n => n.sku === notification.sku) ?? notification
+                    
+                    // Keep edited values if they exist, otherwise use notification values
+                    const currentMinStock = editedMinStock ?? Number(currentNotification.minStock) || 0
+                    const currentBuffer = editedBuffer ?? Number(currentNotification.buffer) || 0
+                    
+                    console.log("[v0] Modal values:", { 
+                      currentMinStock,
+                      currentBuffer,
+                      fromNotification: currentNotification.minStock,
+                      fromBuffer: currentNotification.buffer
+                    })
+                    
+                    setSelectedNotification(currentNotification)
+                    setEditedMinStock(currentMinStock)
+                    setEditedBuffer(currentBuffer)
                     setIsEditingMinStock(false)
                     setIsEditingBuffer(false)
+                    setIsSaving(false)
                   }}
                   className={`w-full bg-white rounded-lg p-6 border-l-4 ${getStatusColor(
                     notification.status,
@@ -640,7 +676,10 @@ export default function NotificationsPage() {
                 <p className="text-sm text-[#938d7a]">{selectedNotification.product}</p>
                 <p className="text-xs text-[#938d7a]">Updated 5m ago</p>
               </div>
-              <button onClick={() => setSelectedNotification(null)} className="text-[#938d7a] hover:text-black">
+              <button onClick={() => {
+                setSelectedNotification(null)
+                setIsSaving(false) // Reset saving state when closing modal
+              }} className="text-[#938d7a] hover:text-black">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -689,7 +728,11 @@ export default function NotificationsPage() {
                     <input
                       type="number"
                       value={editedMinStock}
-                      onChange={(e) => setEditedMinStock(Number.parseInt(e.target.value) || 0)}
+                      onChange={(e) => {
+                        const newValue = Number(e.target.value)
+                        console.log("[v0] Setting minStock to:", newValue)
+                        setEditedMinStock(isNaN(newValue) ? 0 : newValue)
+                      }}
                       className="text-3xl font-bold text-black w-24 border-b-2 border-[#cecabf] focus:outline-none focus:border-black"
                     />
                   ) : (
@@ -715,7 +758,11 @@ export default function NotificationsPage() {
                     <input
                       type="number"
                       value={editedBuffer}
-                      onChange={(e) => setEditedBuffer(Number.parseInt(e.target.value) || 0)}
+                      onChange={(e) => {
+                        const newValue = Number(e.target.value)
+                        console.log("[v0] Setting buffer to:", newValue)
+                        setEditedBuffer(isNaN(newValue) ? 0 : newValue)
+                      }}
                       className="text-3xl font-bold text-black w-24 border-b-2 border-[#cecabf] focus:outline-none focus:border-black"
                     />
                   ) : (

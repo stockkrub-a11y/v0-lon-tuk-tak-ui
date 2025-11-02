@@ -873,7 +873,8 @@ async def update_manual_values_endpoint(
             final_row = None
 
         print(f"[Backend] ✅ Updated manual values and recalculated status for {product_sku}")
-        return {
+        # Ensure we always return a consistent response structure
+        response_data = {
             "success": True,
             "message": "Manual values updated and recalculated successfully",
             "product_sku": product_sku,
@@ -881,8 +882,25 @@ async def update_manual_values_endpoint(
             "buffer": stored_buffer,
             "reorder_qty": recomputed_reorder,
             "status": recomputed_status,
-            "updated_row": final_row
+            "updated_row": {
+                "product_sku": product_sku,
+                "min_stock": stored_minstock,
+                "buffer": stored_buffer,
+                "reorder_qty": recomputed_reorder,
+                "status": recomputed_status,
+                "description": recomputed_description,
+                # Include uppercase variants for compatibility
+                "MinStock": stored_minstock,
+                "Buffer": stored_buffer,
+                "Reorder_Qty": recomputed_reorder,
+                "Status": recomputed_status,
+                "Description": recomputed_description
+            }
         }
+        if final_row is not None:
+            # Add any additional fields from final_row
+            response_data["updated_row"].update(final_row)
+        return response_data
         
     except HTTPException:
         raise

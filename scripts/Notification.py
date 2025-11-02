@@ -13,11 +13,11 @@ from DB_server import execute_query
 def get_manual_values(product_sku: str):
     """Get manual MinStock and Buffer values from database"""
     try:
-        df = execute_query(f"SELECT min_stock, reorder_qty FROM stock_notifications WHERE product_sku = '{product_sku}'")
+        df = execute_query(f"SELECT min_stock, buffer FROM stock_notifications WHERE product_sku = '{product_sku}'")
         if df is not None and not df.empty:
             return {
                 'min_stock': df.iloc[0]['min_stock'] if pd.notna(df.iloc[0]['min_stock']) else None,
-                'buffer': df.iloc[0]['reorder_qty'] if pd.notna(df.iloc[0]['reorder_qty']) else None
+                'buffer': df.iloc[0]['buffer'] if pd.notna(df.iloc[0]['buffer']) else None
             }
     except Exception as e:
         print(f"Warning: Failed to get manual values from DB: {e}")
@@ -61,13 +61,13 @@ def generate_stock_report(df_prev, df_curr):
     curr['weeks_to_empty'] = (curr['stock_level'] / curr['weekly_sale']).round(2)
 
     # Get manual values from database for all products
-    manual_values_df = execute_query("SELECT product_sku, min_stock, reorder_qty FROM stock_notifications")
+    manual_values_df = execute_query("SELECT product_sku, min_stock, buffer FROM stock_notifications")
     manual_min_map = {}
     manual_buf_map = {}
     
     if manual_values_df is not None and not manual_values_df.empty:
         manual_min_map = manual_values_df.set_index('product_sku')['min_stock'].to_dict()
-        manual_buf_map = manual_values_df.set_index('product_sku')['reorder_qty'].to_dict()
+        manual_buf_map = manual_values_df.set_index('product_sku')['buffer'].to_dict()
     
     # min_stock: manual override, else formula
     default_min = (curr['weekly_sale'] * WEEKS_TO_COVER * SAFETY_FACTOR).astype(int)

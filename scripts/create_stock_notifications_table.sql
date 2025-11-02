@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS stock_notifications (
     decrease_rate NUMERIC(10, 2),
     weeks_to_empty NUMERIC(10, 2),
     min_stock INTEGER,
+    buffer INTEGER,
     reorder_qty INTEGER,
     status VARCHAR(50),
     description TEXT,
