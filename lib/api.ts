@@ -669,9 +669,15 @@ export async function getSearchSuggestions(search: string) {
 // Prediction Functions - Keep using backend for ML operations
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
 
+console.log("[v0] API_BASE_URL configured as:", API_BASE_URL)
+console.log("[v0] NEXT_PUBLIC_API_URL env var:", process.env.NEXT_PUBLIC_API_URL)
+
 export async function predictSales(nForecast = 3) {
   try {
-    const response = await fetch(`${API_BASE_URL}/predict?n_forecast=${nForecast}`, {
+    const url = `${API_BASE_URL}/predict?n_forecast=${nForecast}`
+    console.log("[v0] Calling prediction endpoint:", url)
+
+    const response = await fetch(url, {
       method: "POST",
     })
 
@@ -682,6 +688,11 @@ export async function predictSales(nForecast = 3) {
     return await response.json()
   } catch (error) {
     console.error("[v0] Prediction failed:", error)
+    console.error("[v0] Error details:", {
+      message: error instanceof Error ? error.message : String(error),
+      apiBaseUrl: API_BASE_URL,
+      envVar: process.env.NEXT_PUBLIC_API_URL,
+    })
     throw error
   }
 }
