@@ -16,14 +16,14 @@ export async function getStockLevels(params?: {
 
     let query = supabase
       .from("base_stock")
-      .select(`product_name, product_sku, stock_level, category, flag, unchanged_counter`)
+      .select("product_name, product_sku, stock_level, category, flag, unchanged_counter")
 
     // Apply filters
     if (params?.search) {
       query = query.or(`product_name.ilike.%${params.search}%,product_sku.ilike.%${params.search}%`)
     }
     if (params?.category) {
-      query = query.eq('category', params.category)
+      query = query.eq("category", params.category)
     }
     if (params?.flag) {
       query = query.eq("flag", params.flag)
@@ -81,7 +81,7 @@ export async function getStockCategories() {
     }
 
     // Get unique categories
-    const categories = [...new Set(data.map((item) => item.category))];
+    const categories = [...new Set(data.map((item) => item.category))]
 
     console.log("[v0] Successfully fetched", categories.length, "categories")
 
@@ -90,7 +90,7 @@ export async function getStockCategories() {
       data: categories.filter(Boolean),
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error'
+    const message = error instanceof Error ? error.message : "Unknown error"
     console.error("[v0] Failed to fetch categories:", message)
     return { success: false, data: [], error: message }
   }
@@ -119,12 +119,12 @@ export async function getNotifications() {
     // schema sometimes uses mixed-case or localized column names, so map
     // common variants to stable keys.
     return data.map((item: any) => {
-      console.log('[v0] Raw notification item:', item);
+      console.log("[v0] Raw notification item:", item)
 
       const normalizedItem = {
         Product: item.product ?? item.Product ?? item.product_name ?? item.Product_name ?? "",
         Product_SKU: item.product_sku ?? item.Product_SKU ?? item.ProductSKU ?? item.ProductSku ?? "",
-        Category: item.category ?? item.Category ?? item['หมวดหมู่'] ?? "",
+        Category: item.category ?? item.Category ?? item["หมวดหมู่"] ?? "",
         Stock: Number(item.stock ?? item.Stock ?? item.stock_level ?? 0) || 0,
         Last_Stock: Number(item.last_stock ?? item.Last_Stock ?? 0) || 0,
         "Decrease_Rate(%)": Number(item.decrease_rate ?? item["Decrease_Rate(%)"] ?? 0) || 0,
@@ -137,7 +137,7 @@ export async function getNotifications() {
         // keep original raw item for debugging
         _raw: item,
       }
-      return normalizedItem;
+      return normalizedItem
     })
   } catch (error) {
     console.error("[v0] Failed to fetch notifications:", error)
@@ -229,7 +229,7 @@ export async function getAnalysisHistoricalSales(sku: string) {
     const supabase = getSupabaseClient()
     // First, try to find historical sales by SKU or product name in `base_data`.
     // This handles requests like a SKU lookup which should return sales over time.
-    let { data: salesData, error: salesError } = await supabase
+    const { data: salesData, error: salesError } = await supabase
       .from("base_data")
       .select("*")
       .or(`product_sku.ilike.%${sku}%,product_name.ilike.%${sku}%`)
@@ -279,7 +279,7 @@ export async function getAnalysisHistoricalSales(sku: string) {
 
     // If no sales records, try treating the query as a category/product search
     // and return the current stock snapshot from `base_stock`.
-    let { data: stockData, error: stockError } = await supabase
+    const { data: stockData, error: stockError } = await supabase
       .from("base_stock")
       .select("product_sku, product_name, stock_level, flag, category")
       .or(`product_name.ilike.%${sku}%,category.ilike.%${sku}%,product_sku.ilike.%${sku}%`)
@@ -435,9 +435,7 @@ export async function getAnalysisBaseSKUs(search = "") {
     const skus = new Set<string>()
 
     try {
-      const { data: stockData, error: stockError } = await supabase
-        .from("base_stock")
-        .select("product_sku")
+      const { data: stockData, error: stockError } = await supabase.from("base_stock").select("product_sku")
 
       if (stockError) {
         console.warn("[v0] Warning fetching SKUs from base_stock:", stockError)
@@ -765,21 +763,21 @@ export async function trainModel(salesFile: File, productFile?: File) {
           const { error: productError } = await supabase
             .from("base_stock")
             .upsert(productData, { onConflict: "product_sku" })
-          
+
           if (productError) throw productError
-          
+
           // Also insert into all_products table
-          const allProductsData = productData.map(item => ({
+          const allProductsData = productData.map((item) => ({
             product_sku: item.product_sku,
             product_name: item.product_name,
             category: item.category,
-            quantity: item.stock_level
+            quantity: item.stock_level,
           }))
-          
+
           const { error: allProductsError } = await supabase
             .from("all_products")
             .upsert(allProductsData, { onConflict: "product_sku" })
-          
+
           if (allProductsError) throw allProductsError
         }
       }
@@ -815,8 +813,14 @@ export async function trainModel(salesFile: File, productFile?: File) {
   })
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: "Training failed" }))
-    throw new Error(error.detail || "Training failed")
+    let errMsg = `Upload failed: ${response.status}`
+    try {
+      const json = await response.json()
+      errMsg = json.detail || json.message || errMsg
+    } catch (e) {
+      // ignore
+    }
+    throw new Error(errMsg)
   }
 
   return await response.json()
@@ -902,35 +906,39 @@ export async function checkBackendHealth() {
  * Update manual MinStock/Buffer values directly in Supabase for stock_notifications.
  * This is used when the Python backend is not available (Supabase-only mode).
  */
-export async function updateNotificationManualValues(product_sku: string, minstock?: number | null, buffer?: number | null) {
+export async function updateNotificationManualValues(
+  product_sku: string,
+  minstock?: number | null,
+  buffer?: number | null,
+) {
   try {
     const supabase = getSupabaseClient()
 
     // Fetch current notification row
     const { data: rows, error: fetchErr } = await supabase
-      .from('stock_notifications')
-      .select('*')
-      .eq('product_sku', product_sku)
+      .from("stock_notifications")
+      .select("*")
+      .eq("product_sku", product_sku)
       .limit(1)
 
     if (fetchErr) throw fetchErr
     const row = Array.isArray(rows) && rows.length > 0 ? rows[0] : null
     if (!row) {
-      return { success: false, message: 'Product not found in stock_notifications' }
+      return { success: false, message: "Product not found in stock_notifications" }
     }
 
     // Normalize numeric fields
     const stock = Number(row.Stock ?? row.stock_level ?? row.currentStock ?? 0) || 0
     const last_stock = Number(row.Last_Stock ?? row.last_stock ?? 0) || 0
 
-    const weekly_sale = Math.max((last_stock - stock), 1)
-    const decrease_rate = last_stock > 0 ? ((last_stock - stock) / last_stock * 100) : 0
+    const weekly_sale = Math.max(last_stock - stock, 1)
+    const decrease_rate = last_stock > 0 ? ((last_stock - stock) / last_stock) * 100 : 0
 
     // Determine new minstock and buffer using same rules as backend
-    const new_minstock = typeof minstock === 'number' ? minstock : Math.floor(weekly_sale * 2 * 1.5)
+    const new_minstock = typeof minstock === "number" ? minstock : Math.floor(weekly_sale * 2 * 1.5)
 
     let new_buffer: number
-    if (typeof buffer === 'number') {
+    if (typeof buffer === "number") {
       new_buffer = buffer
     } else {
       if (decrease_rate > 50) new_buffer = 20
@@ -943,16 +951,16 @@ export async function updateNotificationManualValues(product_sku: string, minsto
     const new_reorder_qty = Math.max(new_minstock + new_buffer - stock, default_reorder)
 
     // Determine status and description
-    const is_red = (stock < new_minstock) || (decrease_rate > 50)
-    const is_yellow = (!is_red) && (decrease_rate > 20)
+    const is_red = stock < new_minstock || decrease_rate > 50
+    const is_yellow = !is_red && decrease_rate > 20
 
-    let new_status = 'Green'
-    let new_description = 'Stock is sufficient'
+    let new_status = "Green"
+    let new_description = "Stock is sufficient"
     if (is_red) {
-      new_status = 'Red'
+      new_status = "Red"
       new_description = `Decreasing rapidly and nearly out of stock! Recommend restocking ${new_reorder_qty} units`
     } else if (is_yellow) {
-      new_status = 'Yellow'
+      new_status = "Yellow"
       new_description = `Decreasing rapidly, should prepare to restock. Recommend restocking ${new_reorder_qty} units`
     }
 
@@ -967,9 +975,9 @@ export async function updateNotificationManualValues(product_sku: string, minsto
     }
 
     const { error: updateErr } = await supabase
-      .from('stock_notifications')
+      .from("stock_notifications")
       .update(payload)
-      .eq('product_sku', product_sku)
+      .eq("product_sku", product_sku)
 
     if (updateErr) throw updateErr
 
@@ -983,7 +991,7 @@ export async function updateNotificationManualValues(product_sku: string, minsto
       description: new_description,
     }
   } catch (error) {
-    console.error('[v0] Failed to update manual notification values:', error)
+    console.error("[v0] Failed to update manual notification values:", error)
     return { success: false, message: error instanceof Error ? error.message : String(error) }
   }
 }
