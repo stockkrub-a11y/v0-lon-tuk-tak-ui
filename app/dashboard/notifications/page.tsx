@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState, useEffect, useMemo, useCallback } from "react"
+import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import Link from "next/link"
 import {
   Search,
@@ -55,6 +55,8 @@ export default function NotificationsPage() {
   const [selectedStatuses, setSelectedStatuses] = useState<NotificationStatus[]>([])
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]) // Added state for selected categories
   const [searchQuery, setSearchQuery] = useState("") // Added state for search query
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("")
+  const searchDebounceTimer = useRef<NodeJS.Timeout | null>(null)
   const [categorySearch, setCategorySearch] = useState("") // Added state for category search
   const [isPreviousStockModalOpen, setIsPreviousStockModalOpen] = useState(false)
   const [isCurrentStockModalOpen, setIsCurrentStockModalOpen] = useState(false)
@@ -156,6 +158,22 @@ export default function NotificationsPage() {
     fetchAndSetNotifications()
   }, []) // Removed fetchAndSetNotifications from dependencies to prevent infinite loop
 
+  useEffect(() => {
+    if (searchDebounceTimer.current) {
+      clearTimeout(searchDebounceTimer.current)
+    }
+
+    searchDebounceTimer.current = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery)
+    }, 300)
+
+    return () => {
+      if (searchDebounceTimer.current) {
+        clearTimeout(searchDebounceTimer.current)
+      }
+    }
+  }, [searchQuery])
+
   const filteredAndSortedNotifications = useMemo(() => {
     return notifications
       .filter((n) => {
@@ -169,11 +187,11 @@ export default function NotificationsPage() {
           return false
         }
 
-        // Search filter (searches in SKU and product name)
+        // Search filter (searches in SKU and product name) - using debounced query
         if (
-          searchQuery &&
-          !n.sku.toLowerCase().includes(searchQuery.toLowerCase()) &&
-          !n.product.toLowerCase().includes(searchQuery.toLowerCase())
+          debouncedSearchQuery &&
+          !n.sku.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) &&
+          !n.product.toLowerCase().includes(debouncedSearchQuery.toLowerCase())
         ) {
           return false
         }
@@ -195,7 +213,7 @@ export default function NotificationsPage() {
             return 0
         }
       })
-  }, [notifications, selectedStatuses, selectedCategories, searchQuery, sortBy])
+  }, [notifications, selectedStatuses, selectedCategories, debouncedSearchQuery, sortBy])
 
   // Get unique categories from notifications
   const uniqueCategories = useMemo(() => {
