@@ -25,13 +25,16 @@ try:
     if supabase_url and supabase_key:
         supabase: Client = create_client(supabase_url, supabase_key)
         print("✅ Supabase client initialized successfully")
+        SUPABASE_AVAILABLE = True
     else:
         supabase = None
-        print("⚠️ Supabase credentials not found. Database features will be disabled.")
+        print("⚠️  Supabase credentials not found. Database features will be disabled.")
         print("   Set SUPABASE_URL and SUPABASE_KEY environment variables to enable database.")
+        SUPABASE_AVAILABLE = False
 except Exception as e:
     supabase = None
-    print(f"⚠️ Failed to initialize Supabase client: {str(e)}")
+    SUPABASE_AVAILABLE = False
+    print(f"⚠️  Failed to initialize Supabase client: {str(e)}")
     print("   Database features will be disabled.")
 
 # Import local modules
@@ -94,7 +97,9 @@ async def health_check():
     health_status = {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "database": "connected" if supabase else "not configured"
+        "database": "connected" if SUPABASE_AVAILABLE else "not configured",
+        "supabase_url_set": bool(os.getenv("SUPABASE_URL")),
+        "supabase_key_set": bool(os.getenv("SUPABASE_KEY"))
     }
     return health_status
 
@@ -166,6 +171,10 @@ async def get_notifications():
     print("NOTIFICATIONS ENDPOINT CALLED", flush=True)
     print("="*80, flush=True)
     sys.stdout.flush()
+    
+    if not SUPABASE_AVAILABLE:
+        print("⚠️  Supabase not available, returning empty notifications", flush=True)
+        return []
     
     try:
         print("Supabase client: fetching notifications...", flush=True)

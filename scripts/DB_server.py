@@ -14,21 +14,33 @@ load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-try:
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-    response = supabase.table('base_stock').select("count").limit(1).execute()
-    if response.data is not None:
-        print("✅ Connected to Supabase successfully")
-    else:
-        print("⚠️ Connected but no response")
-except Exception as e:
-    print("❌ Supabase connection failed:", e)
+supabase = None
+SUPABASE_AVAILABLE = False
+
+if SUPABASE_URL and SUPABASE_KEY:
+    try:
+        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        # Don't test connection on import - let it fail gracefully when actually used
+        print("✅ Supabase client initialized")
+        SUPABASE_AVAILABLE = True
+    except Exception as e:
+        print(f"⚠️ Supabase client initialization failed: {e}")
+        supabase = None
+        SUPABASE_AVAILABLE = False
+else:
+    print("⚠️ Supabase credentials not found (SUPABASE_URL or SUPABASE_KEY missing)")
+    print("   Database features will be disabled until credentials are added.")
     supabase = None
+    SUPABASE_AVAILABLE = False
 
 def execute_query(query: str, params: dict = None) -> pd.DataFrame:
     """
     Execute a query using Supabase and return results as a DataFrame
     """
+    if not SUPABASE_AVAILABLE or supabase is None:
+        print("⚠️ Supabase not available - cannot execute query")
+        return pd.DataFrame()
+    
     try:
         # For SELECT queries
         if query.lower().strip().startswith('select'):
@@ -62,6 +74,10 @@ def insert_data(table_name: str, data: dict | list):
     """
     Insert data into a table using Supabase
     """
+    if not SUPABASE_AVAILABLE or supabase is None:
+        print("⚠️ Supabase not available - cannot insert data")
+        return None
+    
     try:
         # Import required libraries inside function for reliability
         import pandas as _pd
@@ -197,6 +213,10 @@ def update_data(table_name: str, data: dict, match_column: str, match_value: any
     """
     Update data in a table using Supabase
     """
+    if not SUPABASE_AVAILABLE or supabase is None:
+        print("⚠️ Supabase not available - cannot update data")
+        return None
+    
     try:
         result = supabase.table(table_name).update(data).eq(match_column, match_value).execute()
         return result.data
@@ -208,6 +228,10 @@ def delete_data(table_name: str, match_column: str, match_value: any):
     """
     Delete data from a table using Supabase
     """
+    if not SUPABASE_AVAILABLE or supabase is None:
+        print("⚠️ Supabase not available - cannot delete data")
+        return None
+    
     try:
         # Special case: if match_value == '*' or None, delete all rows from the table
         # PostgREST/Supabase rejects DELETE without a WHERE clause; use a safe predicate
