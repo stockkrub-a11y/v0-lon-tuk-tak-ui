@@ -14,6 +14,7 @@ import joblib
 from dotenv import load_dotenv
 from supabase import create_client, Client
 import os
+from fastapi import BackgroundTasks
 
 # Load environment variables
 load_dotenv()
@@ -1105,92 +1106,78 @@ async def get_search_suggestions(search: str = Query("", description="Search ter
 # TRAIN AND PREDICT ENDPOINTS
 # ============================================================================
 
-@app.post("/train")
-async def train_model(
-    product_file: UploadFile = File(...),
-    sales_file: UploadFile = File(...)
+from fastapi import BackgroundTasks
+
+async def process_training_in_background(
+    product_content: bytes,
+    sales_content: bytes,
+    product_filename: str,
+    sales_filename: str
 ):
-    """Train the forecasting model with product and sales data"""
+    """Process training in the background to avoid timeout"""
+    import tempfile
+    import os
+    
     try:
-        print("[Backend] Starting model training...")
-        # Read uploaded files
-        product_content = await product_file.read()
-        sales_content = await sales_file.read()
-        print(f"[Backend] Product file: {product_file.filename}")
-        print(f"[Backend] Sales file: {sales_file.filename}")
-        import tempfile
+        print("[Background] Starting background training process...")
+        
         # Create temporary files
         with tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix='.xlsx') as product_temp:
             product_temp.write(product_content)
             product_temp_path = product_temp.name
+        
         with tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix='.xlsx') as sales_temp:
             sales_temp.write(sales_content)
             sales_temp_path = sales_temp.name
+        
         try:
-            print(f"[Backend] Calling auto_cleaning with sales_path={sales_temp_path}, product_path={product_temp_path}")
+            print(f"[Background] Calling auto_cleaning with sales_path={sales_temp_path}, product_path={product_temp_path}")
             df_cleaned = auto_cleaning(sales_temp_path, product_temp_path)
             rows_uploaded = len(df_cleaned)
-            print(f"[Backend] Cleaned data: {rows_uploaded} rows")
+            print(f"[Background] Cleaned data: {rows_uploaded} rows")
+            
             # Insert cleaned data into Supabase
             import pandas as pd
             records = df_cleaned.to_dict(orient='records')
-            print(f"[Backend] Preparing to insert {len(records)} records into base_data")
-            print(f"[Backend] Columns in cleaned data: {df_cleaned.columns.tolist()}")
+            print(f"[Background] Preparing to insert {len(records)} records into base_data")
+            
             # Handle datetime columns and NaN values
             for record in records:
-                for key, value in list(record.items()):  # Use list() to avoid modifying during iteration
+                for key, value in list(record.items()):
                     if pd.isna(value):
                         record[key] = None
                     elif isinstance(value, pd.Timestamp):
                         record[key] = value.isoformat()
                     elif isinstance(value, float) and pd.isna(value):
                         record[key] = None
-            print("[Backend] Data cleaned and ready for insertion")
             
-            print("[Backend] Clearing old data from base_data...")
+            print("[Background] Clearing old data from base_data...")
             delete_data('base_data', 'product_sku', '*')
-            print("[Backend] Old data cleared, now inserting new data...")
+            print("[Background] Old data cleared, now inserting new data...")
             
             result = insert_data('base_data', records)
             if result is None:
-                print("[Backend] ⚠️ Failed to insert data into base_data")
-                raise HTTPException(status_code=500, detail="Failed to insert data into Supabase")
+                print("[Background] ⚠️ Failed to insert data into base_data")
+                return
             
-            print(f"[Backend] ✅ Successfully inserted {len(records)} records into base_data")
-
-            response = {
-                "success": True,
-                "data_cleaning": {
-                    "status": "completed",
-                    "rows_uploaded": rows_uploaded,
-                    "message": f"Successfully cleaned and uploaded {rows_uploaded} rows"
-                },
-                "ml_training": {
-                    "status": "pending",
-                    "message": "Training not started"
-                }
-            }
-            # Train the model (if you want to keep this logic, adapt to use Supabase for all DB access)
+            print(f"[Background] ✅ Successfully inserted {len(records)} records into base_data")
+            
+            # Train the model
             try:
                 df_window_raw, df_window, base_model, X_train, y_train, X_test, y_test, product_sku_last = update_model_and_train(df_cleaned)
-                print("[Backend] ✅ Model training completed successfully")
-                response["ml_training"] = {
-                    "status": "completed",
-                    "message": "Model trained successfully"
-                }
+                print("[Background] ✅ Model training completed successfully")
+                
                 # Forecast generation and saving to Supabase
                 try:
-                    print("[Backend] Generating forecasts...")
+                    print("[Background] Generating forecasts...")
                     long_forecast, forecast_results = forcast_loop(X_train, y_train, df_window_raw, product_sku_last, base_model)
+                    
                     if forecast_results and len(forecast_results) > 0:
-                        import pandas as pd
                         from datetime import datetime
-                        # insert_data and delete_data are already imported at the top of the file
                         
                         # Convert forecast results to DataFrame
-                        print("[Backend] Processing forecast results...")
+                        print("[Background] Processing forecast results...")
                         forecast_df = pd.DataFrame(forecast_results)
-                        print(f"[Backend] Forecast columns: {forecast_df.columns.tolist()}")
                         
                         # Add timestamp
                         now = datetime.now()
@@ -1198,7 +1185,7 @@ async def train_model(
                         
                         # Clean up data for Supabase
                         records = forecast_df.to_dict(orient='records')
-                        print(f"[Backend] Cleaning {len(records)} forecast records...")
+                        print(f"[Background] Cleaning {len(records)} forecast records...")
                         for record in records:
                             for key, value in list(record.items()):
                                 if pd.isna(value):
@@ -1209,56 +1196,95 @@ async def train_model(
                                     record[key] = value.isoformat()
                         
                         # Clear old forecasts and insert new ones
-                        print("[Backend] Clearing old forecasts...")
+                        print("[Background] Clearing old forecasts...")
                         delete_data('forecast_output', 'product_sku', '*')
                         
-                        print("[Backend] Inserting new forecasts...")
+                        print("[Background] Inserting new forecasts...")
                         result = insert_data('forecast_output', records)
                         if result is not None:
-                            print(f"[Backend] ✅ Successfully saved {len(records)} forecasts to forecast_output")
-                            response["ml_training"]["forecast_rows"] = len(records)
-                            response["ml_training"]["message"] = f"Model trained and {len(records)} forecasts generated and saved to forecast_output"
+                            print(f"[Background] ✅ Successfully saved {len(records)} forecasts to forecast_output")
                         else:
-                            print("[Backend] ⚠️ Failed to save forecasts to forecast_output")
-                            response["ml_training"]["message"] = "Model trained but failed to save forecasts"
+                            print("[Background] ⚠️ Failed to save forecasts to forecast_output")
                     else:
-                        response["ml_training"]["message"] = "Model trained but no forecasts generated"
+                        print("[Background] No forecasts generated")
+                        
                 except Exception as forecast_error:
-                    print(f"[Backend] ⚠️ Forecast generation or saving failed: {str(forecast_error)}")
+                    print(f"[Background] ⚠️ Forecast generation or saving failed: {str(forecast_error)}")
                     import traceback
                     traceback.print_exc()
-                    response["ml_training"]["message"] = f"Model trained but forecast generation/saving failed: {str(forecast_error)}"
+                    
             except Exception as train_error:
-                print(f"[Backend] ❌ Model training failed: {str(train_error)}")
+                print(f"[Background] ❌ Model training failed: {str(train_error)}")
                 import traceback
                 traceback.print_exc()
-                response["ml_training"] = {
-                    "status": "failed",
-                    "message": f"Training failed: {str(train_error)}"
-                }
-            return response
+                
         finally:
             # Clean up temporary files
-            import os
             try:
                 os.unlink(product_temp_path)
                 os.unlink(sales_temp_path)
             except:
                 pass
+                
+    except Exception as e:
+        print(f"[Background] ❌ Error in background training: {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+@app.post("/train")
+async def train_model(
+    background_tasks: BackgroundTasks,
+    product_file: UploadFile = File(...),
+    sales_file: UploadFile = File(...)
+):
+    """Train the forecasting model with product and sales data - returns immediately and processes in background"""
+    try:
+        print("[Backend] Starting model training...")
+        
+        # Read uploaded files
+        product_content = await product_file.read()
+        sales_content = await sales_file.read()
+        
+        print(f"[Backend] Product file: {product_file.filename}")
+        print(f"[Backend] Sales file: {sales_file.filename}")
+        
+        # Add background task
+        background_tasks.add_task(
+            process_training_in_background,
+            product_content,
+            sales_content,
+            product_file.filename,
+            sales_file.filename
+        )
+        
+        # Return immediately
+        return {
+            "success": True,
+            "message": "Training started in background. Data will be processed shortly.",
+            "data_cleaning": {
+                "status": "processing",
+                "message": "Data cleaning and upload in progress"
+            },
+            "ml_training": {
+                "status": "processing",
+                "message": "Model training will start after data upload completes"
+            }
+        }
+        
     except Exception as e:
         print(f"[Backend] ❌ Error in train_model: {str(e)}")
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
-# </CHANGE> Adding /train1 as an alias to /train for backward compatibility
 @app.post("/train1")
 async def train_model_alias(
+    background_tasks: BackgroundTasks,
     product_file: UploadFile = File(...),
     sales_file: UploadFile = File(...)
 ):
     """Alias for /train endpoint - for backward compatibility"""
-    return await train_model(product_file, sales_file)
+    return await train_model(background_tasks, product_file, sales_file)
 
 @app.get("/predict/existing")
 async def get_existing_forecasts():
