@@ -266,6 +266,17 @@ export default function NotificationsPage() {
     }
   }
 
+  const getStatusTitle = (status: NotificationStatus): string => {
+    switch (status) {
+      case "critical":
+        return "Nearly Out of Stock!"
+      case "warning":
+        return "Decreasing Rapidly"
+      case "safe":
+        return "Stock is Enough"
+    }
+  }
+
   const handleNotificationClick = useCallback(
     (notification: Notification) => {
       const currentNotification = notifications.find((n) => n.sku === notification.sku) ?? notification
@@ -428,11 +439,12 @@ export default function NotificationsPage() {
 
           if (json && json.success) {
             const newStatus = calculateStatus(selectedNotification.currentStock, finalMinStock, finalBuffer)
+            const newTitle = getStatusTitle(newStatus)
 
             setNotifications((prev) =>
               prev.map((n) =>
                 n.sku === selectedNotification.sku
-                  ? { ...n, minStock: finalMinStock, buffer: finalBuffer, status: newStatus }
+                  ? { ...n, minStock: finalMinStock, buffer: finalBuffer, status: newStatus, title: newTitle }
                   : n,
               ),
             )
@@ -444,6 +456,7 @@ export default function NotificationsPage() {
                     minStock: finalMinStock,
                     buffer: finalBuffer,
                     status: newStatus,
+                    title: newTitle,
                   }
                 : prev,
             )
@@ -463,12 +476,13 @@ export default function NotificationsPage() {
       const result = await updateNotificationManualValues(selectedNotification.sku, finalMinStock, finalBuffer)
       if (result && result.success) {
         const newStatus = calculateStatus(selectedNotification.currentStock, finalMinStock, finalBuffer)
+        const newTitle = getStatusTitle(newStatus)
 
         // Update local state immediately
         setNotifications((prev) =>
           prev.map((n) =>
             n.sku === selectedNotification.sku
-              ? { ...n, minStock: finalMinStock, buffer: finalBuffer, status: newStatus }
+              ? { ...n, minStock: finalMinStock, buffer: finalBuffer, status: newStatus, title: newTitle }
               : n,
           ),
         )
@@ -480,6 +494,7 @@ export default function NotificationsPage() {
                 minStock: finalMinStock,
                 buffer: finalBuffer,
                 status: newStatus,
+                title: newTitle,
               }
             : prev,
         )
