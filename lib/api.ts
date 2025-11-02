@@ -694,7 +694,6 @@ export async function predictSales(nForecast = 3) {
         console.error("[v0] Backend error response:", errorData)
         errorMessage = errorData.detail || errorData.message || errorMessage
       } catch (e) {
-        // If response is not JSON, try to get text
         try {
           const errorText = await response.text()
           console.error("[v0] Backend error text:", errorText)
@@ -707,8 +706,15 @@ export async function predictSales(nForecast = 3) {
     }
 
     const result = await response.json()
-    console.log("[v0] Prediction successful:", result)
-    return result
+    console.log("[v0] Prediction started:", result)
+
+    // Backend now returns immediately with status, not forecast data
+    // Frontend should poll getExistingForecasts() to get results
+    return {
+      status: "processing",
+      message: result.message || "Prediction started",
+      n_forecast: nForecast,
+    }
   } catch (error) {
     console.error("[v0] Prediction failed:", error)
     console.error("[v0] Error details:", {

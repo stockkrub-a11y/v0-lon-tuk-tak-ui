@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from supabase import create_client, Client
 import os
 from fastapi import BackgroundTasks
+import signal # Import signal for alarm
 
 # Load environment variables
 load_dotenv()
@@ -1106,67 +1107,88 @@ async def get_search_suggestions(search: str = Query("", description="Search ter
 # TRAIN AND PREDICT ENDPOINTS
 # ============================================================================
 
-from fastapi import BackgroundTasks
-
 def background_predict_task(n_forecast: int):
     """Background task to generate predictions without blocking the HTTP response"""
+    
+    def timeout_handler(signum, frame):
+        raise TimeoutError("Prediction task exceeded time limit")
+    
     try:
-        print(f"[Background] Starting prediction process for {n_forecast} months...")
+        # Set a 4-minute timeout for the entire prediction process
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(240)  # 4 minutes
+        
+        print(f"[Background] Starting prediction process for {n_forecast} months...", flush=True)
+        sys.stdout.flush()
         
         # Check if model is trained (base_data exists)
         try:
-            print("[Background] Checking base_data table...")
+            print("[Background] Checking base_data table...", flush=True)
+            sys.stdout.flush()
             df = execute_query("SELECT * FROM base_data LIMIT 1")
             if df is None or len(df) == 0:
-                print("[Background] No training data found in base_data")
+                print("[Background] No training data found in base_data", flush=True)
+                sys.stdout.flush()
                 return
-            print(f"[Background] Found training data: {len(df)} rows")
+            print(f"[Background] Found training data: {len(df)} rows", flush=True)
+            sys.stdout.flush()
         except Exception as e:
-            print(f"[Background] Error checking base_data: {str(e)}")
+            print(f"[Background] Error checking base_data: {str(e)}", flush=True)
             import traceback
             traceback.print_exc()
+            sys.stdout.flush()
             return
         
-        print("[Background] Loading trained model and data...")
+        print("[Background] Loading trained model and data...", flush=True)
+        sys.stdout.flush()
         
         if not os.path.exists("xgb_sales_model.pkl"):
-            print("[Background] Model file not found")
+            print("[Background] Model file not found", flush=True)
+            sys.stdout.flush()
             return
 
         # Load model
         base_model = joblib.load("xgb_sales_model.pkl")
         
         # Get the latest training data from base_data
-        print("[Background] Fetching training data from Supabase...")
+        print("[Background] Fetching training data from Supabase...", flush=True)
+        sys.stdout.flush()
         df_cleaned = execute_query("SELECT * FROM base_data ORDER BY sales_date DESC")
         if df_cleaned is None:
-            print("[Background] Failed to retrieve training data from Supabase")
+            print("[Background] Failed to retrieve training data from Supabase", flush=True)
+            sys.stdout.flush()
             return
         
         # Convert date columns to datetime
-        print("[Background] Converting date columns...")
+        print("[Background] Converting date columns...", flush=True)
+        sys.stdout.flush()
         try:
             df_cleaned['sales_date'] = pd.to_datetime(df_cleaned['sales_date'])
             if 'week_date' in df_cleaned.columns:
                 df_cleaned['week_date'] = pd.to_datetime(df_cleaned['week_date'])
         except Exception as e:
-            print(f"[Background] Error converting dates: {str(e)}")
+            print(f"[Background] Error converting dates: {str(e)}", flush=True)
+            sys.stdout.flush()
             return
         
         # Recreate the training data
-        print("[Background] Preparing training data...")
+        print("[Background] Preparing training data...", flush=True)
+        sys.stdout.flush()
         df_window_raw, df_window, _, X_train, y_train, X_test, y_test, product_sku_last = update_model_and_train(df_cleaned)
         
         # Run forecast loop with n_forecast parameter
-        print(f"[Background] Running forecast loop for {n_forecast} months...")
+        print(f"[Background] Running forecast loop for {n_forecast} months...", flush=True)
+        sys.stdout.flush()
         long_forecast, forecast_results = forcast_loop(X_train, y_train, df_window_raw, product_sku_last, base_model, n_forecast=n_forecast)
         
         if not forecast_results or len(forecast_results) == 0:
-            print("[Background] No forecast results generated")
+            print("[Background] No forecast results generated", flush=True)
+            sys.stdout.flush()
             return
         
         # Save forecasts to database
-        print("[Background] Saving forecasts to Supabase...")
+        print("[Background] Saving forecasts to Supabase...", flush=True)
+        sys.stdout.flush()
         forecast_df = pd.DataFrame(forecast_results)
         forecast_df['created_at'] = datetime.now()
         
@@ -1185,15 +1207,30 @@ def background_predict_task(n_forecast: int):
         delete_data('forecasts', 'product_sku', '*')
         result = insert_data('forecasts', records)
         if result is None:
-            print("[Background] Failed to save forecasts to Supabase")
+            print("[Background] Failed to save forecasts to Supabase", flush=True)
+            sys.stdout.flush()
             return
         
-        print(f"[Background] ✅ Generated and saved {len(forecast_results)} forecasts for {n_forecast} months")
+        print(f"[Background] ✅ Generated and saved {len(forecast_results)} forecasts for {n_forecast} months", flush=True)
+        sys.stdout.flush()
         
+        # Cancel the alarm
+        signal.alarm(0)
+        
+    except TimeoutError:
+        print(f"[Background] ⚠️ Prediction task timed out after 4 minutes", flush=True)
+        sys.stdout.flush()
     except Exception as e:
-        print(f"[Background] ❌ Error in prediction task: {str(e)}")
+        print(f"[Background] ❌ Error in prediction task: {str(e)}", flush=True)
         import traceback
         traceback.print_exc()
+        sys.stdout.flush()
+    finally:
+        # Ensure alarm is cancelled
+        try:
+            signal.alarm(0)
+        except:
+            pass
 
 async def process_training_in_background(
     product_content: bytes,
@@ -1207,6 +1244,7 @@ async def process_training_in_background(
     
     try:
         print("[Background] Starting background training process...")
+        sys.stdout.flush()
         
         # Create temporary files
         with tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix='.xlsx') as product_temp:
@@ -1219,14 +1257,17 @@ async def process_training_in_background(
         
         try:
             print(f"[Background] Calling auto_cleaning with sales_path={sales_temp_path}, product_path={product_temp_path}")
+            sys.stdout.flush()
             df_cleaned = auto_cleaning(sales_temp_path, product_temp_path)
             rows_uploaded = len(df_cleaned)
             print(f"[Background] Cleaned data: {rows_uploaded} rows")
+            sys.stdout.flush()
             
             # Insert cleaned data into Supabase
             import pandas as pd
             records = df_cleaned.to_dict(orient='records')
             print(f"[Background] Preparing to insert {len(records)} records into base_data")
+            sys.stdout.flush()
             
             # Handle datetime columns and NaN values
             for record in records:
@@ -1239,24 +1280,30 @@ async def process_training_in_background(
                         record[key] = None
             
             print("[Background] Clearing old data from base_data...")
+            sys.stdout.flush()
             delete_data('base_data', 'product_sku', '*')
             print("[Background] Old data cleared, now inserting new data...")
+            sys.stdout.flush()
             
             result = insert_data('base_data', records)
             if result is None:
                 print("[Background] ⚠️ Failed to insert data into base_data")
+                sys.stdout.flush()
                 return
             
             print(f"[Background] ✅ Successfully inserted {len(records)} records into base_data")
+            sys.stdout.flush()
             
             # Train the model
             try:
                 df_window_raw, df_window, base_model, X_train, y_train, X_test, y_test, product_sku_last = update_model_and_train(df_cleaned)
                 print("[Background] ✅ Model training completed successfully")
+                sys.stdout.flush()
                 
                 # Forecast generation and saving to Supabase
                 try:
                     print("[Background] Generating forecasts...")
+                    sys.stdout.flush()
                     long_forecast, forecast_results = forcast_loop(X_train, y_train, df_window_raw, product_sku_last, base_model)
                     
                     if forecast_results and len(forecast_results) > 0:
@@ -1264,6 +1311,7 @@ async def process_training_in_background(
                         
                         # Convert forecast results to DataFrame
                         print("[Background] Processing forecast results...")
+                        sys.stdout.flush()
                         forecast_df = pd.DataFrame(forecast_results)
                         
                         # Add timestamp
@@ -1273,6 +1321,7 @@ async def process_training_in_background(
                         # Clean up data for Supabase
                         records = forecast_df.to_dict(orient='records')
                         print(f"[Background] Cleaning {len(records)} forecast records...")
+                        sys.stdout.flush()
                         for record in records:
                             for key, value in list(record.items()):
                                 if pd.isna(value):
@@ -1284,26 +1333,33 @@ async def process_training_in_background(
                         
                         # Clear old forecasts and insert new ones
                         print("[Background] Clearing old forecasts...")
+                        sys.stdout.flush()
                         delete_data('forecast_output', 'product_sku', '*')
                         
                         print("[Background] Inserting new forecasts...")
+                        sys.stdout.flush()
                         result = insert_data('forecast_output', records)
                         if result is not None:
                             print(f"[Background] ✅ Successfully saved {len(records)} forecasts to forecast_output")
+                            sys.stdout.flush()
                         else:
                             print("[Background] ⚠️ Failed to save forecasts to forecast_output")
+                            sys.stdout.flush()
                     else:
                         print("[Background] No forecasts generated")
+                        sys.stdout.flush()
                         
                 except Exception as forecast_error:
                     print(f"[Background] ⚠️ Forecast generation or saving failed: {str(forecast_error)}")
                     import traceback
                     traceback.print_exc()
+                    sys.stdout.flush()
                     
             except Exception as train_error:
                 print(f"[Background] ❌ Model training failed: {str(train_error)}")
                 import traceback
                 traceback.print_exc()
+                sys.stdout.flush()
                 
         finally:
             # Clean up temporary files
@@ -1317,6 +1373,7 @@ async def process_training_in_background(
         print(f"[Background] ❌ Error in background training: {str(e)}")
         import traceback
         traceback.print_exc()
+        sys.stdout.flush()
 
 @app.post("/train")
 async def train_model(
@@ -1327,6 +1384,7 @@ async def train_model(
     """Train the forecasting model with product and sales data - returns immediately and processes in background"""
     try:
         print("[Backend] Starting model training...")
+        sys.stdout.flush()
         
         # Read uploaded files
         product_content = await product_file.read()
@@ -1334,6 +1392,7 @@ async def train_model(
         
         print(f"[Backend] Product file: {product_file.filename}")
         print(f"[Backend] Sales file: {sales_file.filename}")
+        sys.stdout.flush()
         
         # Add background task
         background_tasks.add_task(
@@ -1378,9 +1437,11 @@ async def get_existing_forecasts():
     """Get existing forecast data from the forecasts table"""
     try:
         print("[Backend] Fetching existing forecasts...")
+        sys.stdout.flush()
         
         try:
             print("[Backend] Querying Supabase...")
+            sys.stdout.flush()
             df = execute_query("""
                 SELECT 
                     product_sku,
@@ -1395,6 +1456,7 @@ async def get_existing_forecasts():
             
             if df is not None and not df.empty:
                 print(f"[Backend] ✅ Retrieved {len(df)} forecasts")
+                sys.stdout.flush()
                 # Convert timestamps to strings
                 for idx, row in df.iterrows():
                     for col in ['forecast_date', 'current_date_col', 'created_at']:
@@ -1404,34 +1466,39 @@ async def get_existing_forecasts():
                 return {"success": True, "forecast": df.to_dict('records')}
             else:
                 print("[Backend] No forecasts found")
+                sys.stdout.flush()
                 return {"success": True, "forecast": []}
                 
         except Exception as db_error:
             print(f"[Backend] Error querying forecasts: {str(db_error)}")
             import traceback
             traceback.print_exc()
+            sys.stdout.flush()
             return {"success": True, "forecast": []}
         
     except Exception as e:
         print(f"[Backend] ❌ Error fetching forecasts: {str(e)}")
         import traceback
         traceback.print_exc()
+        sys.stdout.flush()
         return {"success": False, "forecast": [], "error": str(e)}
 
 # Modify /predict endpoint to use background task
 @app.post("/predict")
 async def predict_sales(background_tasks: BackgroundTasks, n_forecast: int = Query(3, description="Number of months to forecast")):
     """Generate sales forecasts for n months - returns immediately and processes in background"""
-    print(f"\n{'='*80}", flush=True)
+    print("\n" + "="*80, flush=True)
     print(f"🎯 PREDICT ENDPOINT CALLED - n_forecast={n_forecast}", flush=True)
     print(f"{'='*80}\n", flush=True)
     sys.stdout.flush()
     
     try:
         print(f"[Backend] Queuing prediction task for {n_forecast} months...")
+        sys.stdout.flush()
         
         if not SUPABASE_AVAILABLE:
             print("[Backend] ⚠️ Supabase not available")
+            sys.stdout.flush()
             raise HTTPException(
                 status_code=503,
                 detail="Database not available. Please check Supabase configuration."
@@ -1440,20 +1507,24 @@ async def predict_sales(background_tasks: BackgroundTasks, n_forecast: int = Que
         # Check if model is trained (base_data exists)
         try:
             print("[Backend] Checking base_data table...")
+            sys.stdout.flush()
             df = execute_query("SELECT * FROM base_data LIMIT 1")
             if df is None or len(df) == 0:
                 print("[Backend] No training data found in base_data")
+                sys.stdout.flush()
                 raise HTTPException(
                     status_code=400,
                     detail="No training data available. Please train the model first by uploading product and sales data."
                 )
             print(f"[Backend] Found training data: {len(df)} rows")
+            sys.stdout.flush()
         except HTTPException:
             raise
         except Exception as e:
             print(f"[Backend] Error checking base_data: {str(e)}")
             import traceback
             traceback.print_exc()
+            sys.stdout.flush()
             raise HTTPException(
                 status_code=400,
                 detail=f"Failed to check training data: {str(e)}"
@@ -1461,6 +1532,7 @@ async def predict_sales(background_tasks: BackgroundTasks, n_forecast: int = Que
         
         if not os.path.exists("xgb_sales_model.pkl"):
             print("[Backend] Model file not found")
+            sys.stdout.flush()
             raise HTTPException(
                 status_code=400,
                 detail="Model file not found. Please train the model first by uploading product and sales data."
@@ -1469,6 +1541,7 @@ async def predict_sales(background_tasks: BackgroundTasks, n_forecast: int = Que
         background_tasks.add_task(background_predict_task, n_forecast)
         
         print(f"[Backend] ✅ Prediction task queued successfully for {n_forecast} months")
+        sys.stdout.flush()
         
         return {
             "status": "success",
@@ -1483,6 +1556,7 @@ async def predict_sales(background_tasks: BackgroundTasks, n_forecast: int = Que
         print(f"[Backend] ❌ Error queueing prediction: {str(e)}")
         import traceback
         traceback.print_exc()
+        sys.stdout.flush()
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/predict/clear")
@@ -1490,6 +1564,7 @@ async def clear_forecasts():
     """Clear all forecast data"""
     try:
         print("[Backend] Clearing forecasts...")
+        sys.stdout.flush()
         result = delete_data('forecasts', 'product_sku', '*')
         if result is None:
             raise HTTPException(
@@ -1497,12 +1572,14 @@ async def clear_forecasts():
                 detail="Failed to clear forecasts from database"
             )
         print("[Backend] ✅ Forecasts cleared")
+        sys.stdout.flush()
         return {"success": True, "message": "Forecasts cleared successfully"}
         
     except Exception as e:
         print(f"[Backend] ❌ Error clearing forecasts: {str(e)}")
         import traceback
         traceback.print_exc()
+        sys.stdout.flush()
         raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================================================

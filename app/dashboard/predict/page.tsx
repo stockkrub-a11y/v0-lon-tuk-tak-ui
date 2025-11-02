@@ -100,43 +100,71 @@ export default function PredictPage() {
 
     console.log("[v0] Starting prediction for", months, "months")
 
-    predictSales(months)
-      .then((response) => {
-        console.log("[v0] Prediction completed:", response)
-        const mapped: ForecastData[] = response.forecast.map((item) => {
-          const forecastDate = new Date(item.forecast_date)
-          return {
-            sku: item.product_sku,
-            forecastDate: forecastDate.toLocaleDateString("en-US", { month: "short", year: "2-digit" }),
-            forecastDateRaw: forecastDate,
-            predictedSales: Math.round(item.predicted_sales).toString(),
-            currentSale: Math.round(item.current_sales).toString(),
-            currentDate: new Date(item.current_date_col).toLocaleDateString("en-US", {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-            }),
-          }
-        })
+    try {
+      // Start the prediction (returns immediately)
+      const response = await predictSales(months)
+      console.log("[v0] Prediction started:", response)
 
-        mapped.sort((a, b) => {
-          const skuCompare = a.sku.localeCompare(b.sku)
-          if (skuCompare !== 0) return skuCompare
-          return a.forecastDateRaw.getTime() - b.forecastDateRaw.getTime()
-        })
+      // Poll for results every 5 seconds
+      let attempts = 0
+      const maxAttempts = 36 // 3 minutes max (36 * 5 seconds)
 
-        setForecastData(mapped)
-      })
-      .catch((error) => {
-        console.error("[v0] Prediction failed:", error)
-        alert(
-          `Prediction failed: ${error instanceof Error ? error.message : "Unknown error"}. Make sure the backend server is running for ML predictions.`,
-        )
-      })
-      .finally(() => {
-        setIsLoading(false)
-        setIsGenerating(false)
-      })
+      const pollForResults = async () => {
+        attempts++
+        console.log(`[v0] Polling for results (attempt ${attempts}/${maxAttempts})...`)
+
+        const data = await getExistingForecasts()
+
+        if (data.forecast && data.forecast.length > 0) {
+          console.log("[v0] Forecast data received:", data)
+          const mapped: ForecastData[] = data.forecast.map((item) => {
+            const forecastDate = new Date(item.forecast_date)
+            return {
+              sku: item.product_sku,
+              forecastDate: forecastDate.toLocaleDateString("en-US", { month: "short", year: "2-digit" }),
+              forecastDateRaw: forecastDate,
+              predictedSales: Math.round(item.predicted_sales).toString(),
+              currentSale: Math.round(item.current_sales).toString(),
+              currentDate: new Date(item.current_date_col).toLocaleDateString("en-US", {
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+              }),
+            }
+          })
+
+          mapped.sort((a, b) => {
+            const skuCompare = a.sku.localeCompare(b.sku)
+            if (skuCompare !== 0) return skuCompare
+            return a.forecastDateRaw.getTime() - b.forecastDateRaw.getTime()
+          })
+
+          setForecastData(mapped)
+          setIsLoading(false)
+          setIsGenerating(false)
+          console.log("[v0] Prediction completed successfully")
+        } else if (attempts < maxAttempts) {
+          // Keep polling
+          setTimeout(pollForResults, 5000)
+        } else {
+          // Timeout
+          console.error("[v0] Prediction timed out after 3 minutes")
+          alert("Prediction is taking longer than expected. Please check back in a few minutes and click Refresh.")
+          setIsLoading(false)
+          setIsGenerating(false)
+        }
+      }
+
+      // Start polling after 5 seconds
+      setTimeout(pollForResults, 5000)
+    } catch (error) {
+      console.error("[v0] Prediction failed:", error)
+      alert(
+        `Prediction failed: ${error instanceof Error ? error.message : "Unknown error"}. Make sure the backend server is running for ML predictions.`,
+      )
+      setIsLoading(false)
+      setIsGenerating(false)
+    }
   }
 
   const handleReset = () => {
