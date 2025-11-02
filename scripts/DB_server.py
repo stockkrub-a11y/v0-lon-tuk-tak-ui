@@ -234,13 +234,28 @@ def delete_data(table_name: str, match_column: str, match_value: any):
     
     try:
         # Special case: if match_value == '*' or None, delete all rows from the table
-        # PostgREST/Supabase rejects DELETE without a WHERE clause; use a safe predicate
         if match_value == '*' or match_value is None:
-            # Assume table has integer primary key 'id' starting from 1; delete rows where id != 0
-            result = supabase.table(table_name).delete().neq('id', 0).execute()
+            # Use table-specific logic for deleting all rows
+            if table_name == 'base_data':
+                # For base_data, use sales_year >= 0 which matches all rows
+                result = supabase.table(table_name).delete().gte('sales_year', 0).execute()
+            elif table_name == 'base_stock':
+                # For base_stock, use stock_level >= 0 which matches all rows
+                result = supabase.table(table_name).delete().gte('stock_level', 0).execute()
+            elif table_name == 'stock_notifications':
+                # For stock_notifications, use a condition that matches all rows
+                result = supabase.table(table_name).delete().neq('product_sku', None).execute()
+            elif table_name in ['forecasts', 'forecast_output']:
+                # For forecast tables, use a condition that matches all rows
+                result = supabase.table(table_name).delete().neq('product_sku', None).execute()
+            else:
+                # For other tables with 'id' column, use id >= 0
+                result = supabase.table(table_name).delete().gte('id', 0).execute()
         else:
             result = supabase.table(table_name).delete().eq(match_column, match_value).execute()
+        
+        print(f"[DB] ✅ Successfully deleted from {table_name}")
         return result.data
     except Exception as e:
-        print(f"❌ Delete failed: {str(e)}")
+        print(f"❌ Delete failed: {e}")
         return None
