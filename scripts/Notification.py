@@ -60,29 +60,23 @@ def generate_stock_report(df_prev, df_curr):
     # Weeks to empty
     curr['weeks_to_empty'] = (curr['stock_level'] / curr['weekly_sale']).round(2)
 
-    # Get manual values from database for all products
-    manual_values_df = execute_query("SELECT product_sku, min_stock, buffer FROM stock_notifications")
+    manual_values_df = execute_query("SELECT product_sku, min_stock FROM stock_notifications")
     manual_min_map = {}
-    manual_buf_map = {}
     
     if manual_values_df is not None and not manual_values_df.empty:
         manual_min_map = manual_values_df.set_index('product_sku')['min_stock'].to_dict()
-        manual_buf_map = manual_values_df.set_index('product_sku')['buffer'].to_dict()
     
     # min_stock: manual override, else formula
     default_min = (curr['weekly_sale'] * WEEKS_TO_COVER * SAFETY_FACTOR).astype(int)
     manual_min = curr['product_sku'].map(manual_min_map)
     curr['min_stock'] = np.where(manual_min.notna(), manual_min, default_min).astype(int)
 
-    # Calculate buffer using manual values from DB
     dyn_buf = np.select(
         [curr['decrease_rate'] > 50, curr['decrease_rate'] > 20],
         [20, 10],
         default=5
     )
-    dyn_buf = np.minimum(dyn_buf, MAX_BUFFER)
-    manual_buf = curr['product_sku'].map(manual_buf_map)
-    buffer_values = np.where(manual_buf.notna(), manual_buf, dyn_buf).astype(int)
+    buffer_values = np.minimum(dyn_buf, MAX_BUFFER).astype(int)
 
     # Reorder quantity (at least SAFETY_FACTOR * weekly sale)
     default_reorder = (curr['weekly_sale'] * SAFETY_FACTOR).astype(int)
@@ -113,12 +107,12 @@ def generate_stock_report(df_prev, df_curr):
 from DB_server import update_data
 
 def update_manual_values(product_sku: str, minstock: int = None, buffer: int = None):
-    """Update manual MinStock and Buffer values in the database"""
+    """Update manual MinStock value in the database
+    Note: Buffer is calculated dynamically and not stored in the database"""
     update_payload = {}
     if minstock is not None:
         update_payload['min_stock'] = minstock
-    if buffer is not None:
-        update_payload['reorder_qty'] = buffer
+    # Buffer is now calculated dynamically based on decrease_rate
         
     if update_payload:
         try:
