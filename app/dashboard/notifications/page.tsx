@@ -308,7 +308,6 @@ export default function NotificationsPage() {
   const handleSaveManualValues = async () => {
     if (!selectedNotification) return
 
-    // Always use the edited values when saving
     const finalMinStock = Number(editedMinStock) || 0
     const finalBuffer = Number(editedBuffer) || 0
 
@@ -345,12 +344,12 @@ export default function NotificationsPage() {
           console.log("[v0] Backend update response:", json)
 
           if (json && json.success) {
-            await fetchAndSetNotifications()
+            setNotifications((prev) =>
+              prev.map((n) =>
+                n.sku === selectedNotification.sku ? { ...n, minStock: finalMinStock, buffer: finalBuffer } : n,
+              ),
+            )
 
-            // Wait a bit longer for React state to settle
-            await new Promise((resolve) => setTimeout(resolve, 200))
-
-            // Update the selected notification with the saved values
             setSelectedNotification((prev) =>
               prev
                 ? {
@@ -360,30 +359,28 @@ export default function NotificationsPage() {
                   }
                 : prev,
             )
-            setEditedMinStock(finalMinStock)
-            setEditedBuffer(finalBuffer)
+
             setIsEditingMinStock(false)
             setIsEditingBuffer(false)
+            setIsSaving(false)
 
             alert("Manual values updated and report regenerated (backend).")
-            setIsSaving(false)
             return
           }
         }
       } catch (e) {
-        // Backend not available or failed — fall back to Supabase-only update
         console.log("[v0] Backend failed, falling back to Supabase-only mode")
       }
 
       const result = await updateNotificationManualValues(selectedNotification.sku, finalMinStock, finalBuffer)
       if (result && result.success) {
-        // Refresh notifications to get latest status/description
-        await fetchAndSetNotifications()
+        // Update local state immediately
+        setNotifications((prev) =>
+          prev.map((n) =>
+            n.sku === selectedNotification.sku ? { ...n, minStock: finalMinStock, buffer: finalBuffer } : n,
+          ),
+        )
 
-        // Wait for React state to settle
-        await new Promise((resolve) => setTimeout(resolve, 200))
-
-        // Update the selected notification with the saved values
         setSelectedNotification((prev) =>
           prev
             ? {
@@ -393,8 +390,7 @@ export default function NotificationsPage() {
               }
             : prev,
         )
-        setEditedMinStock(finalMinStock)
-        setEditedBuffer(finalBuffer)
+
         setIsEditingMinStock(false)
         setIsEditingBuffer(false)
 
@@ -630,6 +626,7 @@ export default function NotificationsPage() {
                     })
 
                     setSelectedNotification(currentNotification)
+                    // Use the notification's current values, not any stale edited values
                     setEditedMinStock(Number(currentNotification.minStock) || 0)
                     setEditedBuffer(Number(currentNotification.buffer) || 0)
                     setIsEditingMinStock(false)
