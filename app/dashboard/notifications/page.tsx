@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo, useCallback } from "react"
 import Link from "next/link"
 import {
   Search,
@@ -72,6 +72,8 @@ export default function NotificationsPage() {
   const [isSaving, setIsSaving] = useState(false) // Added state for saving
   const [sortBy, setSortBy] = useState<SortOption>("none") // Added sort state
 
+  const [isFetching, setIsFetching] = useState(false)
+
   useEffect(() => {
     async function checkStock() {
       try {
@@ -91,8 +93,11 @@ export default function NotificationsPage() {
   }, [])
 
   // Extracted fetch + mapping into a reusable function so we can refresh after updates
-  const fetchAndSetNotifications = async () => {
+  const fetchAndSetNotifications = useCallback(async () => {
+    if (isFetching) return // Prevent multiple simultaneous fetches
+
     setIsLoading(true)
+    setIsFetching(true)
     try {
       console.log("[v0] ===== FETCHING NOTIFICATIONS START =====")
       console.log("[v0] API URL:", process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000")
@@ -143,57 +148,64 @@ export default function NotificationsPage() {
       console.error("[v0] Failed to fetch notifications:", error)
     } finally {
       setIsLoading(false)
+      setIsFetching(false)
     }
-  }
+  }, [isFetching])
 
   useEffect(() => {
     fetchAndSetNotifications()
-  }, [])
+  }, []) // Removed fetchAndSetNotifications from dependencies to prevent infinite loop
 
-  const filteredAndSortedNotifications = notifications
-    .filter((n) => {
-      // Status filter
-      if (selectedStatuses.length > 0 && !selectedStatuses.includes(n.status)) {
-        return false
-      }
+  const filteredAndSortedNotifications = useMemo(() => {
+    return notifications
+      .filter((n) => {
+        // Status filter
+        if (selectedStatuses.length > 0 && !selectedStatuses.includes(n.status)) {
+          return false
+        }
 
-      // Category filter
-      if (selectedCategories.length > 0 && !selectedCategories.includes(n.category)) {
-        return false
-      }
+        // Category filter
+        if (selectedCategories.length > 0 && !selectedCategories.includes(n.category)) {
+          return false
+        }
 
-      // Search filter (searches in SKU and product name)
-      if (
-        searchQuery &&
-        !n.sku.toLowerCase().includes(searchQuery.toLowerCase()) &&
-        !n.product.toLowerCase().includes(searchQuery.toLowerCase())
-      ) {
-        return false
-      }
+        // Search filter (searches in SKU and product name)
+        if (
+          searchQuery &&
+          !n.sku.toLowerCase().includes(searchQuery.toLowerCase()) &&
+          !n.product.toLowerCase().includes(searchQuery.toLowerCase())
+        ) {
+          return false
+        }
 
-      return true
-    })
-    .sort((a, b) => {
-      // Apply sorting
-      switch (sortBy) {
-        case "name-asc":
-          return a.product.localeCompare(b.product)
-        case "name-desc":
-          return b.product.localeCompare(a.product)
-        case "quantity-asc":
-          return a.currentStock - b.currentStock
-        case "quantity-desc":
-          return b.currentStock - a.currentStock
-        default:
-          return 0
-      }
-    })
+        return true
+      })
+      .sort((a, b) => {
+        // Apply sorting
+        switch (sortBy) {
+          case "name-asc":
+            return a.product.localeCompare(b.product)
+          case "name-desc":
+            return b.product.localeCompare(a.product)
+          case "quantity-asc":
+            return a.currentStock - b.currentStock
+          case "quantity-desc":
+            return b.currentStock - a.currentStock
+          default:
+            return 0
+        }
+      })
+  }, [notifications, selectedStatuses, selectedCategories, searchQuery, sortBy])
 
   // Get unique categories from notifications
-  const uniqueCategories = Array.from(new Set(notifications.map((n) => n.category))).sort()
+  const uniqueCategories = useMemo(() => {
+    return Array.from(new Set(notifications.map((n) => n.category))).sort()
+  }, [notifications])
 
   // Filter categories based on search
-  const filteredCategories = uniqueCategories.filter((cat) => cat.toLowerCase().includes(categorySearch.toLowerCase()))
+  const filteredCategories = useMemo(() => {
+    return uniqueCategories.filter((cat) => cat.toLowerCase().includes(categorySearch.toLowerCase()))
+  }, [uniqueCategories, categorySearch])
 
   const getStatusColor = (status: NotificationStatus) => {
     switch (status) {
@@ -315,24 +327,26 @@ export default function NotificationsPage() {
           console.log("[v0] Backend update response:", json)
 
           if (json && json.success) {
-            // Always fetch fresh notifications
             await fetchAndSetNotifications()
 
-            // Wait briefly for state update
-            await new Promise((resolve) => setTimeout(resolve, 100))
+            // Wait a bit longer for React state to settle
+            await new Promise((resolve) => setTimeout(resolve, 200))
 
-            // Find the updated notification in the refreshed list
-            const updatedNotification = notifications.find((n) => n.sku === selectedNotification.sku)
-            console.log("[v0] Found updated notification:", updatedNotification)
+            // Update the selected notification with the saved values
+            setSelectedNotification((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    minStock: finalMinStock,
+                    buffer: finalBuffer,
+                  }
+                : prev,
+            )
+            setEditedMinStock(finalMinStock)
+            setEditedBuffer(finalBuffer)
+            setIsEditingMinStock(false)
+            setIsEditingBuffer(false)
 
-            if (updatedNotification) {
-              console.log("[v0] Updating selected notification with:", updatedNotification)
-              setSelectedNotification(updatedNotification)
-              setEditedMinStock(updatedNotification.minStock)
-              setEditedBuffer(updatedNotification.buffer)
-              setIsEditingMinStock(false)
-              setIsEditingBuffer(false)
-            }
             alert("Manual values updated and report regenerated (backend).")
             setIsSaving(false)
             return
@@ -340,29 +354,31 @@ export default function NotificationsPage() {
         }
       } catch (e) {
         // Backend not available or failed — fall back to Supabase-only update
+        console.log("[v0] Backend failed, falling back to Supabase-only mode")
       }
 
-      // Supabase-only mode: update directly using client helper
       const result = await updateNotificationManualValues(selectedNotification.sku, finalMinStock, finalBuffer)
       if (result && result.success) {
-        // Store the current values before refresh
-        const savedMinStock = finalMinStock
-        const savedBuffer = finalBuffer
-
         // Refresh notifications to get latest status/description
         await fetchAndSetNotifications()
 
-        // Update the selected notification with saved values
-        const updatedNotification = notifications.find((n) => n.sku === selectedNotification.sku)
-        if (updatedNotification) {
-          setSelectedNotification({
-            ...updatedNotification,
-            minStock: savedMinStock,
-            buffer: savedBuffer,
-          })
-          setEditedMinStock(savedMinStock)
-          setEditedBuffer(savedBuffer)
-        }
+        // Wait for React state to settle
+        await new Promise((resolve) => setTimeout(resolve, 200))
+
+        // Update the selected notification with the saved values
+        setSelectedNotification((prev) =>
+          prev
+            ? {
+                ...prev,
+                minStock: finalMinStock,
+                buffer: finalBuffer,
+              }
+            : prev,
+        )
+        setEditedMinStock(finalMinStock)
+        setEditedBuffer(finalBuffer)
+        setIsEditingMinStock(false)
+        setIsEditingBuffer(false)
 
         alert("Manual values updated successfully (Supabase-only mode).")
       } else {
@@ -372,7 +388,6 @@ export default function NotificationsPage() {
     } catch (error) {
       console.error("[v0] Failed to update manual values:", error)
       alert(`Failed to update: ${error instanceof Error ? error.message : "Unknown error"}`)
-    } finally {
       setIsSaving(false)
     }
   }
@@ -589,23 +604,16 @@ export default function NotificationsPage() {
                 <button
                   key={notification.id}
                   onClick={() => {
-                    // Always use the current notification from the notifications array
                     const currentNotification = notifications.find((n) => n.sku === notification.sku) ?? notification
 
-                    // Keep edited values if they exist, otherwise use notification values
-                    const currentMinStock = editedMinStock ?? (Number(currentNotification.minStock) || 0)
-                    const currentBuffer = editedBuffer ?? (Number(currentNotification.buffer) || 0)
-
-                    console.log("[v0] Modal values:", {
-                      currentMinStock,
-                      currentBuffer,
-                      fromNotification: currentNotification.minStock,
-                      fromBuffer: currentNotification.buffer,
+                    console.log("[v0] Opening modal for:", currentNotification.sku, {
+                      minStock: currentNotification.minStock,
+                      buffer: currentNotification.buffer,
                     })
 
                     setSelectedNotification(currentNotification)
-                    setEditedMinStock(currentMinStock)
-                    setEditedBuffer(currentBuffer)
+                    setEditedMinStock(Number(currentNotification.minStock) || 0)
+                    setEditedBuffer(Number(currentNotification.buffer) || 0)
                     setIsEditingMinStock(false)
                     setIsEditingBuffer(false)
                     setIsSaving(false)
@@ -683,7 +691,9 @@ export default function NotificationsPage() {
               <button
                 onClick={() => {
                   setSelectedNotification(null)
-                  setIsSaving(false) // Reset saving state when closing modal
+                  setIsEditingMinStock(false)
+                  setIsEditingBuffer(false)
+                  setIsSaving(false)
                 }}
                 className="text-[#938d7a] hover:text-black"
               >
