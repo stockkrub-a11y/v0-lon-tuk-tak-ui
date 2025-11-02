@@ -1108,6 +1108,93 @@ async def get_search_suggestions(search: str = Query("", description="Search ter
 
 from fastapi import BackgroundTasks
 
+def background_predict_task(n_forecast: int):
+    """Background task to generate predictions without blocking the HTTP response"""
+    try:
+        print(f"[Background] Starting prediction process for {n_forecast} months...")
+        
+        # Check if model is trained (base_data exists)
+        try:
+            print("[Background] Checking base_data table...")
+            df = execute_query("SELECT * FROM base_data LIMIT 1")
+            if df is None or len(df) == 0:
+                print("[Background] No training data found in base_data")
+                return
+            print(f"[Background] Found training data: {len(df)} rows")
+        except Exception as e:
+            print(f"[Background] Error checking base_data: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return
+        
+        print("[Background] Loading trained model and data...")
+        
+        if not os.path.exists("xgb_sales_model.pkl"):
+            print("[Background] Model file not found")
+            return
+
+        # Load model
+        base_model = joblib.load("xgb_sales_model.pkl")
+        
+        # Get the latest training data from base_data
+        print("[Background] Fetching training data from Supabase...")
+        df_cleaned = execute_query("SELECT * FROM base_data ORDER BY sales_date DESC")
+        if df_cleaned is None:
+            print("[Background] Failed to retrieve training data from Supabase")
+            return
+        
+        # Convert date columns to datetime
+        print("[Background] Converting date columns...")
+        try:
+            df_cleaned['sales_date'] = pd.to_datetime(df_cleaned['sales_date'])
+            if 'week_date' in df_cleaned.columns:
+                df_cleaned['week_date'] = pd.to_datetime(df_cleaned['week_date'])
+        except Exception as e:
+            print(f"[Background] Error converting dates: {str(e)}")
+            return
+        
+        # Recreate the training data
+        print("[Background] Preparing training data...")
+        df_window_raw, df_window, _, X_train, y_train, X_test, y_test, product_sku_last = update_model_and_train(df_cleaned)
+        
+        # Run forecast loop with n_forecast parameter
+        print(f"[Background] Running forecast loop for {n_forecast} months...")
+        long_forecast, forecast_results = forcast_loop(X_train, y_train, df_window_raw, product_sku_last, base_model, n_forecast=n_forecast)
+        
+        if not forecast_results or len(forecast_results) == 0:
+            print("[Background] No forecast results generated")
+            return
+        
+        # Save forecasts to database
+        print("[Background] Saving forecasts to Supabase...")
+        forecast_df = pd.DataFrame(forecast_results)
+        forecast_df['created_at'] = datetime.now()
+        
+        # Clean up data for Supabase
+        records = forecast_df.to_dict(orient='records')
+        for record in records:
+            for key, value in list(record.items()):
+                if pd.isna(value):
+                    record[key] = None
+                elif isinstance(value, pd.Timestamp):
+                    record[key] = value.isoformat()
+                elif isinstance(value, datetime):
+                    record[key] = value.isoformat()
+        
+        # Clear old forecasts and insert new ones
+        delete_data('forecasts', 'product_sku', '*')
+        result = insert_data('forecasts', records)
+        if result is None:
+            print("[Background] Failed to save forecasts to Supabase")
+            return
+        
+        print(f"[Background] ✅ Generated and saved {len(forecast_results)} forecasts for {n_forecast} months")
+        
+    except Exception as e:
+        print(f"[Background] ❌ Error in prediction task: {str(e)}")
+        import traceback
+        traceback.print_exc()
+
 async def process_training_in_background(
     product_content: bytes,
     sales_content: bytes,
@@ -1331,16 +1418,17 @@ async def get_existing_forecasts():
         traceback.print_exc()
         return {"success": False, "forecast": [], "error": str(e)}
 
+# Modify /predict endpoint to use background task
 @app.post("/predict")
-async def predict_sales(n_forecast: int = Query(3, description="Number of months to forecast")):
-    """Generate sales forecasts for n months"""
+async def predict_sales(background_tasks: BackgroundTasks, n_forecast: int = Query(3, description="Number of months to forecast")):
+    """Generate sales forecasts for n months - returns immediately and processes in background"""
     print(f"\n{'='*80}", flush=True)
     print(f"🎯 PREDICT ENDPOINT CALLED - n_forecast={n_forecast}", flush=True)
     print(f"{'='*80}\n", flush=True)
     sys.stdout.flush()
     
     try:
-        print(f"[Backend] Generating {n_forecast} month forecast...")
+        print(f"[Backend] Queuing prediction task for {n_forecast} months...")
         
         if not SUPABASE_AVAILABLE:
             print("[Backend] ⚠️ Supabase not available")
@@ -1371,101 +1459,28 @@ async def predict_sales(n_forecast: int = Query(3, description="Number of months
                 detail=f"Failed to check training data: {str(e)}"
             )
         
-        print("[Backend] Loading trained model and data...")
-        
         if not os.path.exists("xgb_sales_model.pkl"):
             print("[Backend] Model file not found")
             raise HTTPException(
                 status_code=400,
                 detail="Model file not found. Please train the model first by uploading product and sales data."
             )
-
-        # Load model
-        base_model = joblib.load("xgb_sales_model.pkl")
         
-        # Get the latest training data from base_data
-        print("[Backend] Fetching training data from Supabase...")
-        df_cleaned = execute_query("SELECT * FROM base_data ORDER BY sales_date DESC")
-        if df_cleaned is None:
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to retrieve training data from Supabase"
-            )
+        background_tasks.add_task(background_predict_task, n_forecast)
         
-        # Convert date columns to datetime
-        print("[Backend] Converting date columns...")
-        try:
-            df_cleaned['sales_date'] = pd.to_datetime(df_cleaned['sales_date'])
-            if 'week_date' in df_cleaned.columns:
-                df_cleaned['week_date'] = pd.to_datetime(df_cleaned['week_date'])
-        except Exception as e:
-            print(f"[Backend] Error converting dates: {str(e)}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to process dates in training data: {str(e)}"
-            )
-        
-        # Recreate the training data
-        print("[Backend] Preparing training data...")
-        df_window_raw, df_window, _, X_train, y_train, X_test, y_test, product_sku_last = update_model_and_train(df_cleaned)
-        
-        # Run forecast loop with n_forecast parameter
-        print(f"[Backend] Running forecast loop for {n_forecast} months...")
-        long_forecast, forecast_results = forcast_loop(X_train, y_train, df_window_raw, product_sku_last, base_model, n_forecast=n_forecast)
-        
-        if not forecast_results or len(forecast_results) == 0:
-            print("[Backend] No forecast results generated")
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to generate forecasts"
-            )
-        
-        # Save forecasts to database
-        print("[Backend] Saving forecasts to Supabase...")
-        forecast_df = pd.DataFrame(forecast_results)
-        forecast_df['created_at'] = datetime.now()
-        
-        # Clean up data for Supabase
-        records = forecast_df.to_dict(orient='records')
-        for record in records:
-            for key, value in list(record.items()):
-                if pd.isna(value):
-                    record[key] = None
-                elif isinstance(value, pd.Timestamp):
-                    record[key] = value.isoformat()
-                elif isinstance(value, datetime):
-                    record[key] = value.isoformat()
-        
-        # Clear old forecasts and insert new ones
-        delete_data('forecasts', 'product_sku', '*')
-        result = insert_data('forecasts', records)
-        if result is None:
-            print("[Backend] Failed to save forecasts to Supabase")
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to save forecasts to database"
-            )
-        
-        print(f"[Backend] ✅ Generated and saved {len(forecast_results)} forecasts for {n_forecast} months")
-        
-        # Convert dates to strings for JSON serialization
-        for item in forecast_results:
-            if 'forecast_date' in item:
-                item['forecast_date'] = str(item['forecast_date'])
-            if 'current_date_col' in item:
-                item['current_date_col'] = str(item['current_date_col'])
+        print(f"[Backend] ✅ Prediction task queued successfully for {n_forecast} months")
         
         return {
             "status": "success",
-            "forecast_rows": len(forecast_results),
+            "message": f"Prediction task started for {n_forecast} months. Results will be available shortly.",
             "n_forecast": n_forecast,
-            "forecast": forecast_results
+            "note": "Check /forecasts endpoint or refresh the page to see results"
         }
         
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[Backend] ❌ Error generating forecasts: {str(e)}")
+        print(f"[Backend] ❌ Error queueing prediction: {str(e)}")
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
@@ -1499,3 +1514,4 @@ if __name__ == "__main__":
     print("🚀 Starting Lon TukTak Backend Server")
     print("=" * 80)
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
