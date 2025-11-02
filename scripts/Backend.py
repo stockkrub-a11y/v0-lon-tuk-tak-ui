@@ -18,11 +18,21 @@ import os
 # Load environment variables
 load_dotenv()
 
-# Initialize Supabase client
-supabase: Client = create_client(
-    os.getenv("SUPABASE_URL"),
-    os.getenv("SUPABASE_KEY")
-)
+try:
+    supabase_url = os.getenv("SUPABASE_URL")
+    supabase_key = os.getenv("SUPABASE_KEY")
+    
+    if supabase_url and supabase_key:
+        supabase: Client = create_client(supabase_url, supabase_key)
+        print("✅ Supabase client initialized successfully")
+    else:
+        supabase = None
+        print("⚠️ Supabase credentials not found. Database features will be disabled.")
+        print("   Set SUPABASE_URL and SUPABASE_KEY environment variables to enable database.")
+except Exception as e:
+    supabase = None
+    print(f"⚠️ Failed to initialize Supabase client: {str(e)}")
+    print("   Database features will be disabled.")
 
 # Import local modules
 from Auto_cleaning import auto_cleaning
@@ -80,11 +90,13 @@ async def startup_event():
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
-    return {
+    """Health check endpoint - works even without database"""
+    health_status = {
         "status": "healthy",
-        "timestamp": datetime.now().isoformat()
+        "timestamp": datetime.now().isoformat(),
+        "database": "connected" if supabase else "not configured"
     }
+    return health_status
 
 @app.get("/api/test")
 async def test_endpoint():
@@ -799,7 +811,7 @@ async def update_manual_values_endpoint(
         except Exception:
             last_stock_val = 0
 
-        # Use the values from the request parameters since we've already written them
+        # Use request values for minstock/buffer and compute reorder
         stored_minstock = minstock if minstock is not None else 0
         stored_buffer = buffer if buffer is not None else 0
 
@@ -841,14 +853,14 @@ async def update_manual_values_endpoint(
         second_payload = {}
         
         # Always include these core fields
-        second_payload['reorder_qty'] = int(new_reorder_qty)
+        second_payload['reorder_qty'] = int(recomputed_reorder)
         second_payload['status'] = recomputed_status
         second_payload['description'] = recomputed_description
         second_payload['updated_at'] = datetime.now().isoformat()
 
         # Log the final values we're about to save
         print(f"[Backend] Final calculated values:")
-        print(f"  Reorder Qty: {new_reorder_qty}")
+        print(f"  Reorder Qty: {recomputed_reorder}")
         print(f"  Status: {recomputed_status}")
         print(f"  Description: {recomputed_description}")
 
