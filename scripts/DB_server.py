@@ -15,10 +15,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 try:
-    supabase: Client = create_client(
-        supabase_url=SUPABASE_URL,
-        supabase_key=SUPABASE_KEY
-    )
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
     response = supabase.table('base_stock').select("count").limit(1).execute()
     if response.data is not None:
         print("✅ Connected to Supabase successfully")
